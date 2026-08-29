@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Gavel, Shield, Trophy } from "lucide-react";
+import { RoleScoreBadge } from "@/components/role-score-badge";
 
 interface Props {
   auction: { id: string; name: string; status: string };
@@ -14,6 +15,7 @@ interface LiveState {
   openLot: { sequenceNumber: number; closesAt: string | null } | null;
   player: { fullName: string; category: string; basePrice: number } | null;
   highBid: { amount: number; teamName: string } | null;
+  criciq: { primaryRole: string | null; battingScore: number | null; bowlingScore: number | null } | null;
   soldCount: number;
 }
 
@@ -82,9 +84,19 @@ export function PublicLiveView({ auction, ruleset, teams }: Props) {
             <div className="text-xs uppercase tracking-wide text-white/40 font-semibold mb-2">
               {state.player.category} · Lot #{state.openLot?.sequenceNumber}
             </div>
-            <h1 className="text-4xl font-semibold mb-8" style={{ fontFamily: "Georgia, serif" }}>
+            <h1 className="text-4xl font-semibold mb-3">
               {state.player.fullName}
             </h1>
+
+            {state.criciq && (
+              <div className="flex justify-center mb-6">
+                <RoleScoreBadge
+                  primaryRole={state.criciq.primaryRole}
+                  battingScore={state.criciq.battingScore}
+                  bowlingScore={state.criciq.bowlingScore}
+                />
+              </div>
+            )}
 
             <div className="text-6xl font-bold font-mono text-[#8FBF9F] mb-2">
               {fmt(state.highBid?.amount ?? state.player.basePrice)}

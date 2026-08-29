@@ -6,6 +6,8 @@ import { fetchCricClubsStats } from "@/lib/integrations/cricclubs";
 import { revalidatePath } from "next/cache";
 import * as Sentry from "@sentry/nextjs";
 
+const USE_MOCK_MODE = !process.env.CRICCLUBS_API_KEY;
+
 /**
  * Manually triggered by an Org Admin — pulls latest stats for every player
  * in the org who has a CricClubs ID, and writes a new snapshot row per
@@ -33,6 +35,7 @@ export async function syncCricClubsAction() {
 
   let syncedCount = 0;
   let failedCount = 0;
+  let allZeroCount = 0; // likely sign of a field-mapping mismatch, not a real 0-stat player
 
   for (const player of players ?? []) {
     if (!player.cricclubs_id) continue;
@@ -60,6 +63,13 @@ export async function syncCricClubsAction() {
         failedCount++;
       } else {
         syncedCount++;
+        const allZero =
+          stats.matchesPlayed === 0 &&
+          stats.battingAvg === 0 &&
+          stats.battingSr === 0 &&
+          stats.bowlingAvg === 0 &&
+          stats.bowlingEcon === 0;
+        if (allZero && !USE_MOCK_MODE) allZeroCount++;
       }
     } catch (err) {
       // Don't let one player's sync failure block the rest of the batch.
@@ -79,6 +89,18 @@ export async function syncCricClubsAction() {
     metadata: { player_count: players?.length ?? 0, synced: syncedCount, failed: failedCount },
   });
 
+  if (allZeroCount > 0) {
+    Sentry.captureMessage(
+      `CricClubs sync: ${allZeroCount} player(s) returned all-zero stats — likely field-name mismatch, check raw_payload`,
+      { level: "warning", tags: { area: "cricclubs_sync" }, extra: { orgId: user.orgId, allZeroCount } }
+    );
+  }
+
   revalidatePath("/admin");
-  return { synced: syncedCount, failed: failedCount, total: players?.length ?? 0 };
+  return {
+    synced: syncedCount,
+    failed: failedCount,
+    total: players?.length ?? 0,
+    allZeroWarning: allZeroCount > 0 ? allZeroCount : undefined,
+  };
 }

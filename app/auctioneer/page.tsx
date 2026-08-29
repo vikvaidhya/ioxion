@@ -17,7 +17,7 @@ export default async function AuctioneerPage() {
     .single();
 
   if (!auction) {
-    return <div className="p-8 text-center text-[#8A8372]">No auction found.</div>;
+    return <div className="p-8 text-center text-[var(--ink-soft)]">No auction found.</div>;
   }
 
   const { data: ruleset } = await supabase

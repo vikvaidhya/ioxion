@@ -70,3 +70,39 @@ export function requireRole(user: CurrentUser, allowed: Role[]) {
   const hasRole = user.roles.some((r) => allowed.includes(r));
   if (!hasRole) redirect("/");
 }
+
+/**
+ * Non-redirecting variant for use in the root layout, which also serves
+ * public pages (login, signup, the public live-auction link) that have no
+ * session at all. Returns null instead of redirecting on any failure —
+ * used only to fetch the current org's brand color for theming, never for
+ * anything security-sensitive.
+ */
+export async function getOrgThemeColorSafe(): Promise<string | null> {
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user: authUser },
+    } = await supabase.auth.getUser();
+    if (!authUser) return null;
+
+    const { data: profile } = await supabase
+      .from("users")
+      .select("id")
+      .eq("auth_user_id", authUser.id)
+      .single();
+    if (!profile) return null;
+
+    const { data: membership } = await supabase
+      .from("org_memberships")
+      .select("orgs(theme_color)")
+      .eq("user_id", profile.id)
+      .limit(1)
+      .maybeSingle();
+
+    // @ts-expect-error - supabase-js nested select typing
+    return membership?.orgs?.theme_color ?? null;
+  } catch {
+    return null;
+  }
+}

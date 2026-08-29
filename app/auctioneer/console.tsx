@@ -6,6 +6,7 @@ import { useLiveAuction } from "@/lib/hooks/useLiveAuction";
 import { useCountdown } from "@/lib/hooks/useCountdown";
 import { openNextLotAction, resolveLotAction, voidBidAction } from "./actions";
 import { Gavel, Play, CheckCircle2, XCircle, Ban, Shield } from "lucide-react";
+import { RoleScoreBadge } from "@/components/role-score-badge";
 
 interface Props {
   auction: { id: string; name: string; status: string; public_link_token: string };
@@ -21,6 +22,11 @@ export function AuctioneerConsole({ auction, ruleset, teams: initialTeams, initi
   const [isPending, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
   const [player, setPlayer] = useState<{ full_name: string; category: string; base_price: number } | null>(null);
+  const [criciq, setCriciq] = useState<{
+    primaryRole: string | null;
+    battingScore: number | null;
+    bowlingScore: number | null;
+  } | null>(null);
   const [lots, setLots] = useState(initialLots);
   const [teams, setTeams] = useState(initialTeams);
   const supabase = createClient();
@@ -62,11 +68,12 @@ export function AuctioneerConsole({ auction, ruleset, teams: initialTeams, initi
   useEffect(() => {
     if (!openLot) {
       setPlayer(null);
+      setCriciq(null);
       return;
     }
     supabase
       .from("auction_players")
-      .select("category, base_price, players(full_name)")
+      .select("category, base_price, player_id, players(full_name)")
       .eq("id", openLot.auction_player_id)
       .single()
       .then(({ data }) => {
@@ -77,6 +84,25 @@ export function AuctioneerConsole({ auction, ruleset, teams: initialTeams, initi
             category: data.category,
             base_price: data.base_price,
           });
+
+          supabase
+            .from("criciq_snapshots")
+            .select("primary_role, batting_score, bowling_score")
+            .eq("player_id", data.player_id)
+            .order("synced_at", { ascending: false })
+            .limit(1)
+            .maybeSingle()
+            .then(({ data: criciqData }) => {
+              setCriciq(
+                criciqData
+                  ? {
+                      primaryRole: criciqData.primary_role,
+                      battingScore: criciqData.batting_score,
+                      bowlingScore: criciqData.bowling_score,
+                    }
+                  : null
+              );
+            });
         }
       });
   }, [openLot, supabase]);
@@ -149,16 +175,16 @@ export function AuctioneerConsole({ auction, ruleset, teams: initialTeams, initi
   const timerExpired = openLot && secondsLeft === 0;
 
   return (
-    <div className="min-h-screen bg-[#F6F4EF]">
-      <div className="border-b border-[#DBD5C7] bg-white">
+    <div className="min-h-screen bg-[var(--paper)]">
+      <div className="border-b border-[var(--line)] bg-white">
         <div className="max-w-4xl mx-auto px-6 py-5 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Gavel className="text-[#1B4332]" size={20} />
+            <Gavel className="text-[var(--brand)]" size={20} />
             <span className="font-semibold">iOxion</span>
-            <span className="text-[#8A8372] text-sm">/ Auctioneer Console</span>
-            <span className="text-[#B5AF9F] text-xs">· {orgName}</span>
+            <span className="text-[var(--ink-soft)] text-sm">/ Auctioneer Console</span>
+            <span className="text-[var(--ink-faint)] text-xs">· {orgName}</span>
           </div>
-          <div className="flex items-center gap-3 text-xs font-mono text-[#8A8372]">
+          <div className="flex items-center gap-3 text-xs font-mono text-[var(--ink-soft)]">
             <span>{queuedCount} queued</span>
             <span>·</span>
             <span>{soldCount} sold</span>
@@ -170,47 +196,57 @@ export function AuctioneerConsole({ auction, ruleset, teams: initialTeams, initi
 
       <div className="max-w-4xl mx-auto px-6 py-8 grid grid-cols-3 gap-6">
         <div className="col-span-2 space-y-4">
-          <div className="bg-white border border-[#DBD5C7] rounded-xl overflow-hidden">
+          <div className="bg-white border border-[var(--line)] rounded-xl overflow-hidden">
             {!openLot || !player ? (
               <div className="p-10 text-center">
-                <p className="text-[#8A8372] mb-4">No lot currently open.</p>
+                <p className="text-[var(--ink-soft)] mb-4">No lot currently open.</p>
                 <button
                   onClick={handleOpenNext}
                   disabled={isPending || queuedCount === 0}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-md bg-[#1B4332] text-white font-semibold text-sm hover:bg-[#153726] disabled:opacity-40 transition-colors"
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-md bg-[var(--brand)] text-white font-semibold text-sm hover:bg-[var(--brand-hover)] disabled:opacity-40 transition-colors"
                 >
                   <Play size={15} /> Open next lot
                 </button>
                 {queuedCount === 0 && (
-                  <p className="text-xs text-[#B5AF9F] mt-2">All lots have been processed.</p>
+                  <p className="text-xs text-[var(--ink-faint)] mt-2">All lots have been processed.</p>
                 )}
               </div>
             ) : (
               <>
-                <div className="px-6 py-5 border-b border-[#EFEADD] flex items-center justify-between">
+                <div className="px-6 py-5 border-b border-[var(--brand-soft)] flex items-center justify-between">
                   <div>
-                    <div className="text-xs uppercase tracking-wide text-[#8A8372] font-semibold mb-1">
+                    <div className="text-xs uppercase tracking-wide text-[var(--ink-soft)] font-semibold mb-1">
                       {player.category} · Lot #{openLot.sequence_number}
                     </div>
                     <h1 className="text-xl font-semibold">{player.full_name}</h1>
+                    {criciq && (
+                      <div className="mt-1.5">
+                        <RoleScoreBadge
+                          primaryRole={criciq.primaryRole}
+                          battingScore={criciq.battingScore}
+                          bowlingScore={criciq.bowlingScore}
+                          size="sm"
+                        />
+                      </div>
+                    )}
                   </div>
                   <div
                     className={`font-mono text-2xl font-bold ${
-                      secondsLeft !== null && secondsLeft <= 3 ? "text-[#7A2E2E]" : "text-[#5C5646]"
+                      secondsLeft !== null && secondsLeft <= 3 ? "text-[var(--danger)]" : "text-[var(--ink-soft)]"
                     }`}
                   >
                     {secondsLeft ?? "—"}s
                   </div>
                 </div>
-                <div className="px-6 py-5 border-b border-[#EFEADD] text-center">
-                  <div className="text-xs uppercase tracking-wide text-[#8A8372] font-semibold mb-1">
+                <div className="px-6 py-5 border-b border-[var(--brand-soft)] text-center">
+                  <div className="text-xs uppercase tracking-wide text-[var(--ink-soft)] font-semibold mb-1">
                     Current bid
                   </div>
-                  <div className="text-3xl font-bold font-mono text-[#1B4332]">
+                  <div className="text-3xl font-bold font-mono text-[var(--brand)]">
                     {fmt(highBid?.amount ?? player.base_price)}
                   </div>
                   {highBid && (
-                    <div className="text-xs text-[#8A8372] mt-1">
+                    <div className="text-xs text-[var(--ink-soft)] mt-1">
                       {teams.find((t) => t.id === highBid.team_id)?.name ?? "Unknown team"}
                     </div>
                   )}
@@ -219,18 +255,18 @@ export function AuctioneerConsole({ auction, ruleset, teams: initialTeams, initi
                   <button
                     onClick={handleResolve}
                     disabled={isPending || !timerExpired}
-                    className="flex-1 py-3 rounded-md bg-[#1B4332] text-white font-semibold text-sm hover:bg-[#153726] disabled:opacity-40 transition-colors flex items-center justify-center gap-2"
+                    className="flex-1 py-3 rounded-md bg-[var(--brand)] text-white font-semibold text-sm hover:bg-[var(--brand-hover)] disabled:opacity-40 transition-colors flex items-center justify-center gap-2"
                   >
                     <CheckCircle2 size={15} />
                     {highBid ? "Mark sold now" : "Mark unsold now"}
                   </button>
                 </div>
                 {!timerExpired ? (
-                  <p className="text-xs text-center text-[#B5AF9F] pb-4">
+                  <p className="text-xs text-center text-[var(--ink-faint)] pb-4">
                     Resolves automatically when the timer expires.
                   </p>
                 ) : (
-                  <p className="text-xs text-center text-[#B5AF9F] pb-4">
+                  <p className="text-xs text-center text-[var(--ink-faint)] pb-4">
                     Resolving automatically…
                   </p>
                 )}
@@ -239,20 +275,20 @@ export function AuctioneerConsole({ auction, ruleset, teams: initialTeams, initi
           </div>
 
           {bids.length > 0 && (
-            <div className="bg-white border border-[#DBD5C7] rounded-lg overflow-hidden">
-              <div className="px-4 py-3 border-b border-[#EFEADD] text-xs uppercase tracking-wide text-[#8A8372] font-semibold">
+            <div className="bg-white border border-[var(--line)] rounded-lg overflow-hidden">
+              <div className="px-4 py-3 border-b border-[var(--brand-soft)] text-xs uppercase tracking-wide text-[var(--ink-soft)] font-semibold">
                 Bids on this lot — admin override
               </div>
-              <div className="divide-y divide-[#F6F4EF]">
+              <div className="divide-y divide-[var(--paper)]">
                 {bids.map((b) => (
                   <div key={b.id} className="px-4 py-2.5 flex items-center justify-between text-sm">
-                    <span className={b.is_voided ? "line-through text-[#B5AF9F]" : ""}>
+                    <span className={b.is_voided ? "line-through text-[var(--ink-faint)]" : ""}>
                       {teams.find((t) => t.id === b.team_id)?.name} — {fmt(b.amount)}
                     </span>
                     {!b.is_voided && (
                       <button
                         onClick={() => handleVoid(b.id)}
-                        className="text-xs text-[#7A2E2E] hover:underline flex items-center gap-1"
+                        className="text-xs text-[var(--danger)] hover:underline flex items-center gap-1"
                       >
                         <Ban size={12} /> Void
                       </button>
@@ -264,27 +300,27 @@ export function AuctioneerConsole({ auction, ruleset, teams: initialTeams, initi
           )}
 
           {message && (
-            <div className="text-sm text-[#7A2E2E] bg-white border border-[#DBD5C7] rounded-lg px-4 py-3">
+            <div className="text-sm text-[var(--danger)] bg-white border border-[var(--line)] rounded-lg px-4 py-3">
               {message}
             </div>
           )}
         </div>
 
         <div className="space-y-3">
-          <div className="text-xs uppercase tracking-wide text-[#8A8372] font-semibold px-1">Teams</div>
+          <div className="text-xs uppercase tracking-wide text-[var(--ink-soft)] font-semibold px-1">Teams</div>
           {teams.map((t) => (
-            <div key={t.id} className="bg-white border border-[#DBD5C7] rounded-lg p-3 flex items-center gap-2">
-              <Shield size={14} className="text-[#1B4332]" />
+            <div key={t.id} className="bg-white border border-[var(--line)] rounded-lg p-3 flex items-center gap-2">
+              <Shield size={14} className="text-[var(--brand)]" />
               <div>
                 <div className="text-sm font-medium">{t.name}</div>
-                <div className="text-xs font-mono text-[#8A8372]">{fmt(t.purse_remaining)}</div>
+                <div className="text-xs font-mono text-[var(--ink-soft)]">{fmt(t.purse_remaining)}</div>
               </div>
             </div>
           ))}
           <a
             href={`/live/${auction.public_link_token}`}
             target="_blank"
-            className="block text-center text-xs font-medium text-[#1B4332] hover:underline pt-2"
+            className="block text-center text-xs font-medium text-[var(--brand)] hover:underline pt-2"
           >
             View public live link →
           </a>

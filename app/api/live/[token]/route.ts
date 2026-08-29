@@ -32,11 +32,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ toke
 
   let player = null;
   let highBid = null;
+  let criciq: { primaryRole: string | null; battingScore: number | null; bowlingScore: number | null } | null = null;
 
   if (openLot) {
     const { data: ap } = await supabase
       .from("auction_players")
-      .select("category, base_price, players(full_name)")
+      .select("category, base_price, player_id, players(full_name)")
       .eq("id", openLot.auction_player_id)
       .single();
 
@@ -46,6 +47,22 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ toke
         category: ap.category,
         basePrice: ap.base_price,
       };
+
+      const { data: criciqData } = await supabase
+        .from("criciq_snapshots")
+        .select("primary_role, batting_score, bowling_score")
+        .eq("player_id", ap.player_id)
+        .order("synced_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (criciqData) {
+        criciq = {
+          primaryRole: criciqData.primary_role,
+          battingScore: criciqData.batting_score,
+          bowlingScore: criciqData.bowling_score,
+        };
+      }
     }
 
     const { data: bid } = await supabase
@@ -76,6 +93,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ toke
     openLot: openLot ? { sequenceNumber: openLot.sequence_number, closesAt: openLot.closes_at } : null,
     player,
     highBid,
+    criciq,
     soldCount: soldCount ?? 0,
   });
 }

@@ -16,28 +16,17 @@
  * IMPORTANT: rotate credentials before going live — never commit real
  * CRICCLUBS_CONSUMER_KEY / CRICCLUBS_API_KEY values, only set as env vars.
  *
- * Field-name caveat: still untested against real responses — every real
- * call so far has been rejected with a 406 "SEC001" error from CricClubs'
- * security layer:
- *   {"errorCode":"SEC001","errorMessage":"...automatic Time and Timezone
- *   settings are not enabled on your device..."}
- * This is a bot/device-fingerprint check, not a missing-header issue —
- * the message is boilerplate meant for an end user's browser, and it's
- * being triggered because a server-side fetch() call (especially from a
- * cloud host like Vercel, which uses easily-flagged datacenter IP ranges)
- * doesn't produce the TLS/JS fingerprint a real browser does. Browser-like
- * headers (User-Agent, Accept, Referer, Origin, Sec-Fetch-*) are included
- * below as a best-effort attempt, but if this is IP-reputation or
- * TLS-fingerprint based (common with bot-mitigation vendors like Akamai,
- * PerimeterX/HUMAN, DataDome, Cloudflare Bot Management), no header
- * tuning can work around it — that requires CricClubs to allowlist the
- * calling server, or confirm a different endpoint/access path is meant
- * for programmatic API consumers. If this keeps failing, contact CricClubs
- * support (support@cricclubs.com / +1 866 286 6694) with the SEC001 error
- * and ask specifically whether server-to-server API calls using
- * x-consumer-key/x-api-key need IP allowlisting, and whether
- * core-prod-origin.cricclubs.com is the correct endpoint for that or if
- * there's a separate API-only path without browser bot-detection.
+ * Field-name caveat: still untested against real responses (no network
+ * path to CricClubs from the dev sandbox that built this). All three
+ * endpoints are fetched and merged (overall > batting > bowling
+ * precedence) before field lookup, so whichever endpoint actually has a
+ * given field gets picked up. If real field names differ from all the
+ * variants tried in parseStatsResponse, parsed numbers come back as 0
+ * rather than erroring — always cross-check raw_payload (stored in full,
+ * per-endpoint) in Supabase after a real sync and fix the lookups below if
+ * needed. A partial failure (e.g. a player with no bowling record causing
+ * getPlayerBowlingStats to error) does not block the other two endpoints —
+ * each is fetched independently.
  */
 
 export interface CricClubsProfile {
@@ -69,21 +58,14 @@ async function fetchEndpoint(endpoint: string, cricclubsId: string): Promise<unk
       headers: {
         "x-consumer-key": process.env.CRICCLUBS_CONSUMER_KEY!,
         "x-api-key": process.env.CRICCLUBS_API_KEY!,
-        // Best-effort attempt to look more like a real browser request —
-        // added after CricClubs returned a "SEC001" bot/device-fingerprint
-        // error (not a simple missing-header issue). If this doesn't
-        // resolve it, the block is likely IP-reputation or TLS-fingerprint
-        // based, which no amount of header tuning can work around — see
-        // the module doc comment below for what to do in that case.
+        // Node's server-side fetch does NOT send an Accept header the way
+        // a browser does — some API gateways (including, seemingly,
+        // CricClubs') reject requests without one, returning 406. Also
+        // sending a browser-like User-Agent in case the gateway filters
+        // on that too.
         Accept: "application/json",
-        "Accept-Language": "en-US,en;q=0.9",
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        Referer: "https://cricclubs.com/",
-        Origin: "https://cricclubs.com",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Site": "same-site",
-        "Sec-Fetch-Dest": "empty",
       },
       cache: "no-store",
     });

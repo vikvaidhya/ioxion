@@ -1,26 +1,85 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@500;600;700&display=swap');
 @import "tailwindcss";
 
+/*
+ * iOxion design tokens.
+ *
+ * Grounded in the subject: a live cricket player auction. Warm parchment
+ * surfaces (scorecard paper) carry high-contrast ink text; every number
+ * — prices, stats, the bid timer — renders in a mono scoreboard face so
+ * money and stats always read the same way across the app. --brand is
+ * the one deliberately configurable token: an Org Admin can set their
+ * own accent color, and --brand-hover/--brand-soft derive from it
+ * automatically via color-mix, so a custom brand color never needs
+ * separate hover/tint values hand-picked.
+ *
+ * --urgent is intentionally NOT configurable — it's reserved for exactly
+ * one moment in the whole app: the live bid countdown running low. That
+ * restraint is deliberate, not an oversight.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --paper: #FAF7F0;
+  --surface: #FFFFFF;
+  --ink: #1A1F1C;
+  --ink-soft: #4A5049;
+  --ink-faint: #6B7268;
+  --line: #DDD6C6;
+
+  --brand: #1B6B4A;
+  --brand-hover: color-mix(in srgb, var(--brand) 82%, black);
+  --brand-soft: color-mix(in srgb, var(--brand) 12%, white);
+  --brand-ink: #FFFFFF;
+
+  --urgent: #B5461B;
+  --urgent-soft: color-mix(in srgb, var(--urgent) 14%, white);
+
+  --danger: #8C2F2F;
+  --danger-soft: #F5E6E6;
+  --warning: #8A5A00;
+  --warning-soft: #F5EBD8;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --font-display: "Fraunces", Georgia, serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Roboto Mono", ui-monospace, monospace;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+}
+
+h1, h2, h3, .font-display {
+  font-family: var(--font-display);
+}
+
+.font-scorecard, .tabular-nums {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The signature motif: a stitched-seam divider, a quiet nod to the ball's
+   seam. Used sparingly under section headers — not decoration for its
+   own sake, a structural device marking "here's the next section". */
+.seam-divider {
+  height: 1px;
+  background-image: repeating-linear-gradient(
+    90deg,
+    var(--line) 0,
+    var(--line) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

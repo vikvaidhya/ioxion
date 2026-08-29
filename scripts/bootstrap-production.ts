@@ -34,10 +34,10 @@ if (!url || !serviceKey) {
 }
 
 // ---- EDIT THESE BEFORE RUNNING ----
-const ORG_NAME = "Coastal Premier League";
-const ORG_SLUG = "coastal-premier-league";
-const ADMIN_EMAIL = "REPLACE_ME@example.com";
-const ADMIN_NAME = "REPLACE_ME";
+const ORG_NAME = "Cal Premier League";
+const ORG_SLUG = "cal-premier-league";
+const ADMIN_EMAIL = "vikranth.vaidya@gmail.com";
+const ADMIN_NAME = "Vik";
 // ------------------------------------
 
 const supabase = createClient(url, serviceKey, {

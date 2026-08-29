@@ -50,24 +50,24 @@ function LoginForm() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#F6F4EF] px-4">
+    <div className="min-h-screen flex items-center justify-center bg-[var(--paper)] px-4">
       <div className="w-full max-w-sm">
         <div className="flex items-center gap-2 justify-center mb-8">
-          <Gavel className="text-[#1B4332]" size={22} />
+          <Gavel className="text-[var(--brand)]" size={22} />
           <span className="font-semibold text-lg tracking-tight">iOxion</span>
         </div>
-        <div className="bg-white border border-[#DBD5C7] rounded-lg p-6">
+        <div className="bg-white border border-[var(--line)] rounded-lg p-6">
           <h1 className="text-lg font-semibold mb-1">Sign in</h1>
-          <p className="text-sm text-[#8A8372] mb-5">Access your auction workspace.</p>
+          <p className="text-sm text-[var(--ink-soft)] mb-5">Access your auction workspace.</p>
           {wasReplaced && (
-            <div className="mb-4 text-xs bg-[#EFEADD] text-[#5C5646] rounded-md px-3 py-2">
+            <div className="mb-4 text-xs bg-[var(--brand-soft)] text-[var(--ink-soft)] rounded-md px-3 py-2">
               You were signed out because this account was logged in on another device or browser.
               Only one active session is allowed per account.
             </div>
           )}
           <form onSubmit={handleSubmit} className="space-y-3">
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wide text-[#8A8372] mb-1">
+              <label className="block text-xs font-semibold uppercase tracking-wide text-[var(--ink-soft)] mb-1">
                 Email
               </label>
               <input
@@ -75,11 +75,11 @@ function LoginForm() {
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-3 py-2 rounded-md border border-[#DBD5C7] text-sm focus:outline-none focus:ring-2 focus:ring-[#1B4332]/30"
+                className="w-full px-3 py-2 rounded-md border border-[var(--line)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand)]/30"
               />
             </div>
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wide text-[#8A8372] mb-1">
+              <label className="block text-xs font-semibold uppercase tracking-wide text-[var(--ink-soft)] mb-1">
                 Password
               </label>
               <input
@@ -87,21 +87,21 @@ function LoginForm() {
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-3 py-2 rounded-md border border-[#DBD5C7] text-sm focus:outline-none focus:ring-2 focus:ring-[#1B4332]/30"
+                className="w-full px-3 py-2 rounded-md border border-[var(--line)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand)]/30"
               />
             </div>
-            {error && <p className="text-sm text-[#7A2E2E]">{error}</p>}
+            {error && <p className="text-sm text-[var(--danger)]">{error}</p>}
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-2.5 rounded-md bg-[#1B4332] text-white text-sm font-semibold hover:bg-[#153726] transition-colors disabled:opacity-60"
+              className="w-full py-2.5 rounded-md bg-[var(--brand)] text-white text-sm font-semibold hover:bg-[var(--brand-hover)] transition-colors disabled:opacity-60"
             >
               {loading ? "Signing in…" : "Sign in"}
             </button>
           </form>
-          <p className="text-sm text-[#8A8372] mt-4 text-center">
+          <p className="text-sm text-[var(--ink-soft)] mt-4 text-center">
             No account?{" "}
-            <a href="/signup" className="text-[#1B4332] font-medium hover:underline">
+            <a href="/signup" className="text-[var(--brand)] font-medium hover:underline">
               Sign up
             </a>
           </p>

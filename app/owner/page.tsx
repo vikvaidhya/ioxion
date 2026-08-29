@@ -21,7 +21,7 @@ export default async function OwnerPage() {
     .single();
 
   if (!team) {
-    return <div className="p-8 text-center text-[#8A8372]">No team assigned to your account yet.</div>;
+    return <div className="p-8 text-center text-[var(--ink-soft)]">No team assigned to your account yet.</div>;
   }
 
   const { data: ruleset } = await supabase
