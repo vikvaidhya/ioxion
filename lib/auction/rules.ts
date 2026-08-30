@@ -60,6 +60,9 @@ export function isValidBid(params: {
   minSquadSize: number;
   maxSquadSize: number;
   cheapestRemainingBasePrice: number;
+  isPlayerOverseas?: boolean;
+  currentOverseasCount?: number;
+  maxOverseasPerTeam?: number | null;
 }): { valid: true } | { valid: false; reason: string } {
   const {
     amount,
@@ -71,10 +74,22 @@ export function isValidBid(params: {
     minSquadSize,
     maxSquadSize,
     cheapestRemainingBasePrice,
+    isPlayerOverseas,
+    currentOverseasCount,
+    maxOverseasPerTeam,
   } = params;
 
   if (currentSquadSize >= maxSquadSize) {
     return { valid: false, reason: "Squad is already at maximum size." };
+  }
+
+  if (
+    isPlayerOverseas &&
+    maxOverseasPerTeam !== null &&
+    maxOverseasPerTeam !== undefined &&
+    (currentOverseasCount ?? 0) >= maxOverseasPerTeam
+  ) {
+    return { valid: false, reason: `Your squad is already at its overseas-player cap (${maxOverseasPerTeam}).` };
   }
 
   const floor = currentHighBid ?? basePrice;

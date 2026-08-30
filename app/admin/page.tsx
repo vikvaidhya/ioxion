@@ -12,6 +12,8 @@ import { PlayerTable } from "./player-table";
 import { RulesEditor } from "./rules-editor";
 import { TeamCard } from "./team-card";
 import { AppearanceSettings } from "./appearance-settings";
+import { PreDraftPanel } from "./pre-draft-panel";
+import { CompositionTracker } from "./composition-tracker";
 
 interface Category {
   name: string;
@@ -85,7 +87,7 @@ export default async function AdminDashboard() {
 
   const { data: players } = await supabase
     .from("players")
-    .select("id, full_name, cricclubs_id, cricclubs_id_status, dob, role_override")
+    .select("id, full_name, cricclubs_id, cricclubs_id_status, dob, role_override, is_overseas")
     .eq("org_id", user.orgId)
     .order("full_name");
 
@@ -101,7 +103,7 @@ export default async function AdminDashboard() {
   const { data: auctionPlayers } = playerIds.length
     ? await supabase
         .from("auction_players")
-        .select("player_id, status, category, base_price")
+        .select("player_id, status, category, base_price, sold_to_team_id, sold_price, is_retained")
         .eq("auction_id", auction.id)
         .in("player_id", playerIds)
     : { data: [] };
@@ -111,6 +113,9 @@ export default async function AdminDashboard() {
     status: string;
     category: string;
     base_price: number;
+    sold_to_team_id: string | null;
+    sold_price: number | null;
+    is_retained: boolean;
   }
 
   const auctionPlayerByPlayer = new Map<string, AuctionPlayerInfo>();
@@ -187,6 +192,48 @@ export default async function AdminDashboard() {
     ownersByTeam.set(o.team_id, list);
   }
 
+  // Pre-draft/retention data
+  const auctionLocked = !["draft", "configured"].includes(auction.status);
+
+  const pendingPlayersForRetention = (players ?? [])
+    .filter((p) => auctionPlayerByPlayer.get(p.id)?.status === "pending")
+    .map((p) => ({
+      id: p.id,
+      full_name: p.full_name,
+      is_overseas: p.is_overseas,
+      player_id: p.id,
+      category: auctionPlayerByPlayer.get(p.id)!.category,
+    }));
+
+  const retainedPlayersForPanel = (players ?? [])
+    .filter((p) => auctionPlayerByPlayer.get(p.id)?.is_retained)
+    .map((p) => {
+      const ap = auctionPlayerByPlayer.get(p.id)!;
+      return {
+        id: p.id,
+        full_name: p.full_name,
+        is_overseas: p.is_overseas,
+        player_id: p.id,
+        sold_to_team_id: ap.sold_to_team_id!,
+        sold_price: ap.sold_price!,
+      };
+    });
+
+  // Squad composition tracking — tally each team's SOLD players by their
+  // effective role (manual override, else latest CricIQ primary role).
+  const roleQuotas = (ruleset?.role_quotas as { role: string; minCount: number }[]) ?? [];
+  const countsByTeamAndRole: { [teamId: string]: { [role: string]: number } } = {};
+  if (roleQuotas.length > 0) {
+    for (const p of players ?? []) {
+      const ap = auctionPlayerByPlayer.get(p.id);
+      if (!ap || ap.status !== "sold" || !ap.sold_to_team_id) continue;
+      const role = p.role_override || latestCricIQByPlayer.get(p.id)?.primary_role;
+      if (!role) continue;
+      countsByTeamAndRole[ap.sold_to_team_id] ??= {};
+      countsByTeamAndRole[ap.sold_to_team_id][role] = (countsByTeamAndRole[ap.sold_to_team_id][role] ?? 0) + 1;
+    }
+  }
+
   return (
     <div className="min-h-screen bg-[var(--paper)]">
       <div className="border-b border-[var(--line)] bg-white">
@@ -246,6 +293,18 @@ export default async function AdminDashboard() {
             <AddTeamForm auctionId={auction.id} />
           </div>
         </div>
+
+        <PreDraftPanel
+          auctionId={auction.id}
+          auctionLocked={auctionLocked}
+          pendingPlayers={pendingPlayersForRetention}
+          retainedPlayers={retainedPlayersForPanel}
+          teams={teams ?? []}
+          maxRetentionsPerTeam={ruleset?.max_retentions_per_team ?? 0}
+          currencySymbol={ruleset?.currency_symbol ?? "₹"}
+        />
+
+        <CompositionTracker teams={teams ?? []} quotas={roleQuotas} countsByTeamAndRole={countsByTeamAndRole} />
 
         <div className="grid grid-cols-2 gap-4">
           <InvitePersonForm mode="owner" teams={teams ?? []} />

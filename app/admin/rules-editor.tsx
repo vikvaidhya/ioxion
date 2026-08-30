@@ -27,6 +27,15 @@ interface Ruleset {
   currency_symbol: string;
   currency_name: string;
   categories: { name: string; basePrice: number; tiers: { upTo: number | null; increment: number }[] }[];
+  max_retentions_per_team: number;
+  max_overseas_per_team: number | null;
+  role_quotas: { role: string; minCount: number }[];
+}
+
+interface RoleQuota {
+  id: string;
+  role: string;
+  minCount: number;
 }
 
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -55,6 +64,11 @@ export function RulesEditor({ auctionId, initialRuleset, hasAnySoldPlayers }: Pr
   const [minSquad, setMinSquad] = useState(initialRuleset.min_squad_size);
   const [maxSquad, setMaxSquad] = useState(initialRuleset.max_squad_size);
   const [softClose, setSoftClose] = useState(initialRuleset.soft_close_seconds);
+  const [maxRetentions, setMaxRetentions] = useState(initialRuleset.max_retentions_per_team ?? 0);
+  const [maxOverseas, setMaxOverseas] = useState<number | "">(initialRuleset.max_overseas_per_team ?? "");
+  const [roleQuotas, setRoleQuotas] = useState<RoleQuota[]>(
+    (initialRuleset.role_quotas ?? []).map((q) => ({ id: uid(), role: q.role, minCount: q.minCount }))
+  );
   const [currencyType, setCurrencyType] = useState<"real" | "custom">(initialRuleset.currency_type);
   const [currencyCode, setCurrencyCode] = useState(
     REAL_CURRENCIES.find((c) => c.symbol === initialRuleset.currency_symbol)?.code ?? "INR"
@@ -92,10 +106,19 @@ export function RulesEditor({ auctionId, initialRuleset, hasAnySoldPlayers }: Pr
 
   const removeCategory = (id: string) => setCategories((cs) => cs.filter((c) => c.id !== id));
 
+  const addRoleQuota = () => setRoleQuotas((qs) => [...qs, { id: uid(), role: "", minCount: 1 }]);
+  const updateRoleQuota = (id: string, patch: Partial<RoleQuota>) =>
+    setRoleQuotas((qs) => qs.map((q) => (q.id === id ? { ...q, ...patch } : q)));
+  const removeRoleQuota = (id: string) => setRoleQuotas((qs) => qs.filter((q) => q.id !== id));
+
   const handleSave = () => {
     setError(null);
     if (categories.length === 0) {
       setError("At least one category is required.");
+      return;
+    }
+    if (maxRetentions >= maxSquad) {
+      setError("Max retentions must leave at least one squad slot open for the live auction.");
       return;
     }
     startTransition(async () => {
@@ -112,6 +135,9 @@ export function RulesEditor({ auctionId, initialRuleset, hasAnySoldPlayers }: Pr
           basePrice: c.basePrice,
           tiers: c.tiers.map((t) => ({ upTo: t.upTo, increment: t.increment })),
         })),
+        max_retentions_per_team: maxRetentions,
+        max_overseas_per_team: maxOverseas === "" ? null : maxOverseas,
+        role_quotas: roleQuotas.filter((q) => q.role.trim()).map((q) => ({ role: q.role.trim(), minCount: q.minCount })),
       });
       if (result?.error) {
         setError(result.error);
@@ -258,6 +284,75 @@ export function RulesEditor({ auctionId, initialRuleset, hasAnySoldPlayers }: Pr
                 className="flex-1 accent-[var(--brand)]"
               />
               <div className="font-mono text-lg font-semibold w-16 text-right">{softClose}s</div>
+            </div>
+          </div>
+
+          {/* Retention & composition */}
+          <div className="bg-white border border-[var(--line)] rounded-lg p-4 space-y-4">
+            <h3 className="font-semibold text-sm">Pre-draft retentions & composition</h3>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-[var(--ink-soft)] mb-1">Max retentions per team</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={maxRetentions}
+                  onChange={(e) => setMaxRetentions(Number(e.target.value))}
+                  className="w-full px-2 py-1.5 rounded border border-[var(--line)] text-sm font-mono"
+                />
+                <p className="text-[10px] text-[var(--ink-faint)] mt-1">
+                  Players retained before the auction, at an admin-set price — doesn't go through bidding.
+                </p>
+              </div>
+              <div>
+                <label className="block text-xs text-[var(--ink-soft)] mb-1">Max overseas players per team</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={maxOverseas}
+                  onChange={(e) => setMaxOverseas(e.target.value === "" ? "" : Number(e.target.value))}
+                  placeholder="No cap"
+                  className="w-full px-2 py-1.5 rounded border border-[var(--line)] text-sm font-mono"
+                />
+                <p className="text-[10px] text-[var(--ink-faint)] mt-1">Leave blank for no cap. Hard-enforced during bidding.</p>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs text-[var(--ink-soft)] mb-1.5">
+                Squad composition targets <span className="text-[var(--ink-faint)]">(tracked and displayed, not bid-blocking)</span>
+              </label>
+              <div className="space-y-1.5">
+                {roleQuotas.map((q) => (
+                  <div key={q.id} className="flex items-center gap-2">
+                    <input
+                      value={q.role}
+                      onChange={(e) => updateRoleQuota(q.id, { role: e.target.value })}
+                      placeholder="Role name, e.g. Primary Bowler"
+                      className="flex-1 px-2 py-1 rounded border border-[var(--line)] text-xs"
+                    />
+                    <span className="text-xs text-[var(--ink-faint)]">min</span>
+                    <input
+                      type="number"
+                      min={0}
+                      value={q.minCount}
+                      onChange={(e) => updateRoleQuota(q.id, { minCount: Number(e.target.value) })}
+                      className="w-16 px-2 py-1 rounded border border-[var(--line)] text-xs font-mono"
+                    />
+                    <button onClick={() => removeRoleQuota(q.id)} className="p-1 text-[var(--ink-faint)] hover:text-[var(--danger)]">
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <button onClick={addRoleQuota} className="mt-2 text-xs font-semibold text-[var(--brand)] flex items-center gap-1">
+                <Plus size={11} /> Add composition target
+              </button>
+              <p className="text-[10px] text-[var(--ink-faint)] mt-1.5">
+                A minimum can't be safely enforced by blocking bids mid-auction — the app can't know if the
+                remaining pool will still allow a team to meet it. Targets are shown to Admin/Owners as
+                progress instead, e.g. "2/3 bowlers".
+              </p>
             </div>
           </div>
 

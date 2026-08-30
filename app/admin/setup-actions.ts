@@ -75,10 +75,17 @@ export async function updateRulesetAction(auctionId: string, updates: {
   currency_symbol: string;
   currency_name: string;
   categories: { name: string; basePrice: number; tiers: { upTo: number | null; increment: number }[] }[];
+  max_retentions_per_team: number;
+  max_overseas_per_team: number | null;
+  role_quotas: { role: string; minCount: number }[];
 }) {
   const user = await getCurrentUser();
   requireRole(user, ["org_admin"]);
   const adminDb = createAdminClient();
+
+  if (updates.max_retentions_per_team >= updates.max_squad_size) {
+    return { error: "Max retentions must leave at least one squad slot open for the live auction." };
+  }
 
   const { error } = await adminDb
     .from("auction_rulesets")
@@ -139,6 +146,7 @@ export async function addPlayerAction(params: {
   category: string;
   basePrice: number;
   auctionId: string;
+  isOverseas?: boolean;
 }) {
   const user = await getCurrentUser();
   requireRole(user, ["org_admin"]);
@@ -153,6 +161,7 @@ export async function addPlayerAction(params: {
       cricclubs_id: params.cricclubsId || null,
       cricclubs_id_status: params.cricclubsId ? "unverified" : "unverified",
       cricclubs_id_source: params.cricclubsId ? "admin_import" : null,
+      is_overseas: params.isOverseas ?? false,
     })
     .select()
     .single();
@@ -259,6 +268,7 @@ export interface BulkPlayerRow {
   cricclubsId: string;
   dob: string | null;
   category: string | null;
+  isOverseas: boolean;
 }
 
 export interface BulkUploadResult {
@@ -319,6 +329,7 @@ export async function bulkAddPlayersAction(
           cricclubs_id: row.cricclubsId.trim(),
           cricclubs_id_status: "unverified",
           cricclubs_id_source: "admin_import",
+          is_overseas: row.isOverseas,
         })
         .select()
         .single();
@@ -375,6 +386,7 @@ export async function editPlayerAction(params: {
   category: string;
   basePrice: number;
   roleOverride?: string | null;
+  isOverseas?: boolean;
 }) {
   const user = await getCurrentUser();
   requireRole(user, ["org_admin"]);
@@ -387,6 +399,7 @@ export async function editPlayerAction(params: {
       dob: params.dob || null,
       cricclubs_id: params.cricclubsId || null,
       role_override: params.roleOverride || null,
+      ...(params.isOverseas !== undefined ? { is_overseas: params.isOverseas } : {}),
     })
     .eq("id", params.playerId)
     .eq("org_id", user.orgId);
@@ -752,6 +765,182 @@ export async function deleteTeamAction(teamId: string, auctionId: string) {
   }
 
   const { error } = await adminDb.from("teams").delete().eq("id", teamId);
+  if (error) return { error: error.message };
+
+  revalidatePath("/admin");
+  return { success: true };
+}
+
+/**
+ * Retains a player to a team before the live auction — represented as an
+ * immediate "sale" at an admin-set price (see migration 0008 for why).
+ * Only allowed while the auction hasn't gone live yet, and only within
+ * the configured max_retentions_per_team / max_overseas_per_team caps —
+ * both hard limits, unlike role_quotas which are targets, not blockers.
+ */
+export async function retainPlayerAction(params: {
+  auctionId: string;
+  playerId: string;
+  teamId: string;
+  price: number;
+}) {
+  const user = await getCurrentUser();
+  requireRole(user, ["org_admin"]);
+  const adminDb = createAdminClient();
+
+  const { data: auction } = await adminDb.from("auctions").select("status").eq("id", params.auctionId).single();
+  if (auction && !["draft", "configured"].includes(auction.status)) {
+    return { error: "Can't change retentions once the auction has gone live." };
+  }
+
+  const { data: ruleset } = await adminDb
+    .from("auction_rulesets")
+    .select("max_retentions_per_team, max_overseas_per_team, max_squad_size")
+    .eq("auction_id", params.auctionId)
+    .single();
+  if (!ruleset) return { error: "Ruleset not found." };
+
+  const { data: auctionPlayer } = await adminDb
+    .from("auction_players")
+    .select("id, status, category")
+    .eq("auction_id", params.auctionId)
+    .eq("player_id", params.playerId)
+    .maybeSingle();
+  if (!auctionPlayer) return { error: "Player is not in this auction's pool." };
+  if (auctionPlayer.status !== "pending") {
+    return { error: `Player is already ${auctionPlayer.status} — can't retain.` };
+  }
+
+  const { count: currentRetained } = await adminDb
+    .from("auction_players")
+    .select("id", { count: "exact", head: true })
+    .eq("auction_id", params.auctionId)
+    .eq("retained_by_team_id", params.teamId)
+    .eq("is_retained", true);
+
+  if ((currentRetained ?? 0) >= ruleset.max_retentions_per_team) {
+    return { error: `This team has already used all ${ruleset.max_retentions_per_team} retention slot(s).` };
+  }
+
+  const { count: currentSquadSize } = await adminDb
+    .from("auction_players")
+    .select("id", { count: "exact", head: true })
+    .eq("auction_id", params.auctionId)
+    .eq("sold_to_team_id", params.teamId)
+    .eq("status", "sold");
+
+  if ((currentSquadSize ?? 0) >= ruleset.max_squad_size) {
+    return { error: "This team's squad is already at maximum size." };
+  }
+
+  if (ruleset.max_overseas_per_team !== null) {
+    const { data: player } = await adminDb.from("players").select("is_overseas").eq("id", params.playerId).single();
+    if (player?.is_overseas) {
+      const { data: soldIds } = await adminDb
+        .from("auction_players")
+        .select("player_id")
+        .eq("auction_id", params.auctionId)
+        .eq("sold_to_team_id", params.teamId)
+        .eq("status", "sold");
+      const playerIds = (soldIds ?? []).map((r: { player_id: string }) => r.player_id);
+      const { count: overseasCount } = playerIds.length
+        ? await adminDb
+            .from("players")
+            .select("id", { count: "exact", head: true })
+            .in("id", playerIds)
+            .eq("is_overseas", true)
+        : { count: 0 };
+      if ((overseasCount ?? 0) >= ruleset.max_overseas_per_team) {
+        return { error: `This team is already at its overseas-player cap (${ruleset.max_overseas_per_team}).` };
+      }
+    }
+  }
+
+  const { error: updateErr } = await adminDb
+    .from("auction_players")
+    .update({
+      status: "sold",
+      sold_to_team_id: params.teamId,
+      sold_price: params.price,
+      is_retained: true,
+      retained_by_team_id: params.teamId,
+    })
+    .eq("id", auctionPlayer.id);
+  if (updateErr) return { error: updateErr.message };
+
+  const { data: team } = await adminDb.from("teams").select("purse_remaining").eq("id", params.teamId).single();
+  if (team) {
+    await adminDb.from("teams").update({ purse_remaining: team.purse_remaining - params.price }).eq("id", params.teamId);
+  }
+
+  await adminDb.from("audit_log").insert({
+    org_id: user.orgId,
+    auction_id: params.auctionId,
+    actor_user_id: user.userId,
+    action: "player.retained",
+    entity_type: "auction_player",
+    entity_id: auctionPlayer.id,
+    metadata: { team_id: params.teamId, price: params.price },
+  });
+
+  revalidatePath("/admin");
+  return { success: true };
+}
+
+/** Reverses a retention — only while the auction hasn't gone live, refunds the team's purse. */
+export async function unretainPlayerAction(auctionId: string, playerId: string) {
+  const user = await getCurrentUser();
+  requireRole(user, ["org_admin"]);
+  const adminDb = createAdminClient();
+
+  const { data: auction } = await adminDb.from("auctions").select("status").eq("id", auctionId).single();
+  if (auction && !["draft", "configured"].includes(auction.status)) {
+    return { error: "Can't change retentions once the auction has gone live." };
+  }
+
+  const { data: auctionPlayer } = await adminDb
+    .from("auction_players")
+    .select("id, sold_to_team_id, sold_price, is_retained")
+    .eq("auction_id", auctionId)
+    .eq("player_id", playerId)
+    .maybeSingle();
+  if (!auctionPlayer || !auctionPlayer.is_retained) return { error: "Player is not currently retained." };
+
+  const { error: updateErr } = await adminDb
+    .from("auction_players")
+    .update({ status: "pending", sold_to_team_id: null, sold_price: null, is_retained: false, retained_by_team_id: null })
+    .eq("id", auctionPlayer.id);
+  if (updateErr) return { error: updateErr.message };
+
+  if (auctionPlayer.sold_to_team_id && auctionPlayer.sold_price) {
+    const { data: team } = await adminDb
+      .from("teams")
+      .select("purse_remaining")
+      .eq("id", auctionPlayer.sold_to_team_id)
+      .single();
+    if (team) {
+      await adminDb
+        .from("teams")
+        .update({ purse_remaining: team.purse_remaining + auctionPlayer.sold_price })
+        .eq("id", auctionPlayer.sold_to_team_id);
+    }
+  }
+
+  revalidatePath("/admin");
+  return { success: true };
+}
+
+/** Sets/clears a player's overseas flag — used for the overseas-quota cap. */
+export async function setPlayerOverseasAction(playerId: string, isOverseas: boolean) {
+  const user = await getCurrentUser();
+  requireRole(user, ["org_admin"]);
+  const adminDb = createAdminClient();
+
+  const { error } = await adminDb
+    .from("players")
+    .update({ is_overseas: isOverseas })
+    .eq("id", playerId)
+    .eq("org_id", user.orgId);
   if (error) return { error: error.message };
 
   revalidatePath("/admin");

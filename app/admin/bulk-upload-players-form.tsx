@@ -40,8 +40,10 @@ function rowsFromParseResult(results: Papa.ParseResult<Record<string, string>>):
     const cricclubsId = (r.cricclubs_id || r.cricclubsid || "").trim();
     const dob = (r.dob || r.date_of_birth || "").trim() || null;
     const category = (r.category || "").trim() || null;
+    const overseasRaw = (r.overseas || r.is_overseas || r.overseas_player || "").trim().toLowerCase();
+    const isOverseas = ["yes", "y", "true", "1"].includes(overseasRaw);
     const valid = !!fullName && !!cricclubsId;
-    return { fullName, cricclubsId, dob, category, valid, issue: valid ? undefined : "Missing name or CricClubs ID" };
+    return { fullName, cricclubsId, dob, category, isOverseas, valid, issue: valid ? undefined : "Missing name or CricClubs ID" };
   });
 
   return { rows, error: null };
@@ -117,9 +119,11 @@ export function BulkUploadPlayersForm({ auctionId, categories }: Props) {
 
   const downloadTemplate = () => {
     const csv =
-      "full_name,cricclubs_id,dob,category\nJohn Smith,CC100234,1995-04-12," +
+      "full_name,cricclubs_id,dob,category,overseas\nJohn Smith,CC100234,1995-04-12," +
       (categories[0]?.name ?? "Category A") +
-      "\n";
+      ",no\nMitchell Rivers,CC100235,1993-11-02," +
+      (categories[0]?.name ?? "Category A") +
+      ",yes\n";
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -162,8 +166,9 @@ export function BulkUploadPlayersForm({ auctionId, categories }: Props) {
       </div>
       <p className="text-xs text-[var(--ink-soft)]">
         Needs <strong>full_name</strong> and <strong>cricclubs_id</strong> columns (required). Optional:
-        <strong> dob</strong> (YYYY-MM-DD) and <strong> category</strong> (must match a configured category
-        name, or defaults to your first category).
+        <strong> dob</strong> (YYYY-MM-DD), <strong> category</strong> (must match a configured category
+        name, or defaults to your first category), and <strong> overseas</strong> (yes/no — anything else
+        is treated as "no").
       </p>
 
       <div className="flex gap-1 border-b border-[var(--brand-soft)]">
@@ -220,7 +225,7 @@ export function BulkUploadPlayersForm({ auctionId, categories }: Props) {
           <textarea
             value={pasteText}
             onChange={(e) => setPasteText(e.target.value)}
-            placeholder={`full_name,cricclubs_id,dob,category\nJohn Smith,CC100234,1995-04-12,${categories[0]?.name ?? "Category A"}\nJane Doe,CC100235,,`}
+            placeholder={`full_name,cricclubs_id,dob,category,overseas\nJohn Smith,CC100234,1995-04-12,${categories[0]?.name ?? "Category A"},no\nJane Doe,CC100235,,,yes`}
             rows={6}
             className="w-full px-2 py-2 rounded border border-[var(--line)] text-xs font-mono focus:outline-none focus:ring-2 focus:ring-[var(--brand)]/30"
           />
@@ -256,6 +261,7 @@ export function BulkUploadPlayersForm({ auctionId, categories }: Props) {
                   <th className="px-2 py-1.5">Name</th>
                   <th className="px-2 py-1.5">CricClubs ID</th>
                   <th className="px-2 py-1.5">Category</th>
+                  <th className="px-2 py-1.5">Overseas</th>
                   <th className="px-2 py-1.5">Status</th>
                 </tr>
               </thead>
@@ -265,6 +271,7 @@ export function BulkUploadPlayersForm({ auctionId, categories }: Props) {
                     <td className="px-2 py-1">{r.fullName || "—"}</td>
                     <td className="px-2 py-1 font-mono">{r.cricclubsId || "—"}</td>
                     <td className="px-2 py-1">{r.category || "(default)"}</td>
+                    <td className="px-2 py-1">{r.isOverseas ? "Yes" : "—"}</td>
                     <td className="px-2 py-1">
                       {r.valid ? (
                         <span className="text-[var(--brand)]">OK</span>

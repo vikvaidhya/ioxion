@@ -38,14 +38,14 @@ export async function placeBidAction(lotId: string, teamId: string, amount: numb
 
   const { data: auctionPlayer } = await supabase
     .from("auction_players")
-    .select("category, base_price")
+    .select("category, base_price, player_id")
     .eq("id", lot.auction_player_id)
     .single();
   if (!auctionPlayer) return { error: "Player not found." };
 
   const { data: ruleset } = await supabase
     .from("auction_rulesets")
-    .select("categories, purse_per_team, min_squad_size, max_squad_size")
+    .select("categories, purse_per_team, min_squad_size, max_squad_size, max_overseas_per_team")
     .eq("auction_id", lot.auction_id)
     .single();
   if (!ruleset) return { error: "Ruleset not found." };
@@ -82,6 +82,34 @@ export async function placeBidAction(lotId: string, teamId: string, amount: numb
     .limit(1)
     .maybeSingle();
 
+  // Overseas cap check — only bother fetching this data if a cap is
+  // actually configured, since it's an extra couple queries otherwise
+  // unneeded for most auctions.
+  let isPlayerOverseas = false;
+  let currentOverseasCount = 0;
+  if (ruleset.max_overseas_per_team !== null) {
+    const { data: playerRow } = await supabase.from("players").select("is_overseas").eq("id", auctionPlayer.player_id).single();
+    isPlayerOverseas = playerRow?.is_overseas ?? false;
+
+    if (isPlayerOverseas) {
+      const { data: soldRows } = await supabase
+        .from("auction_players")
+        .select("player_id")
+        .eq("auction_id", lot.auction_id)
+        .eq("sold_to_team_id", teamId)
+        .eq("status", "sold");
+      const soldPlayerIds = (soldRows ?? []).map((r) => r.player_id);
+      if (soldPlayerIds.length) {
+        const { count } = await supabase
+          .from("players")
+          .select("id", { count: "exact", head: true })
+          .in("id", soldPlayerIds)
+          .eq("is_overseas", true);
+        currentOverseasCount = count ?? 0;
+      }
+    }
+  }
+
   const validation = isValidBid({
     amount,
     currentHighBid: highBid?.amount ?? null,
@@ -92,6 +120,9 @@ export async function placeBidAction(lotId: string, teamId: string, amount: numb
     minSquadSize: ruleset.min_squad_size,
     maxSquadSize: ruleset.max_squad_size,
     cheapestRemainingBasePrice: cheapestRemaining?.base_price ?? auctionPlayer.base_price,
+    isPlayerOverseas,
+    currentOverseasCount,
+    maxOverseasPerTeam: ruleset.max_overseas_per_team,
   });
 
   if (!validation.valid) return { error: validation.reason };

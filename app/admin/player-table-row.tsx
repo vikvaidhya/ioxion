@@ -14,6 +14,7 @@ interface Player {
   cricclubs_id_status: string;
   dob: string | null;
   role_override: string | null;
+  is_overseas: boolean;
 }
 
 interface Snapshot {
@@ -84,6 +85,7 @@ export function PlayerTableRow({ player, snapshot, criciq, auctionPlayer, auctio
   const [cricclubsId, setCricclubsId] = useState(player.cricclubs_id ?? "");
   const [category, setCategory] = useState(auctionPlayer?.category ?? categories[0]?.name ?? "");
   const [roleOverride, setRoleOverride] = useState(player.role_override ?? "");
+  const [isOverseas, setIsOverseas] = useState(player.is_overseas);
 
   const isLocked = auctionPlayer && auctionPlayer.status !== "pending";
   const selectedCategory = categories.find((c) => c.name === category);
@@ -105,6 +107,7 @@ export function PlayerTableRow({ player, snapshot, criciq, auctionPlayer, auctio
         category,
         basePrice: selectedCategory?.basePrice ?? auctionPlayer?.base_price ?? 0,
         roleOverride: roleOverride || null,
+        isOverseas,
       });
       if (result?.error) {
         setError(result.error);
@@ -186,6 +189,10 @@ export function PlayerTableRow({ player, snapshot, criciq, auctionPlayer, auctio
                 </option>
               ))}
             </select>
+            <label className="flex items-center gap-1 text-xs text-[var(--ink-soft)] px-1">
+              <input type="checkbox" checked={isOverseas} onChange={(e) => setIsOverseas(e.target.checked)} className="rounded" />
+              Overseas
+            </label>
             <button
               onClick={handleSave}
               disabled={isPending}

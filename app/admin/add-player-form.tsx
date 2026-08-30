@@ -18,6 +18,7 @@ export function AddPlayerForm({ auctionId, categories, currencySymbol = "₹" }:
   const [dob, setDob] = useState("");
   const [cricclubsId, setCricclubsId] = useState("");
   const [category, setCategory] = useState(categories[0]?.name ?? "");
+  const [isOverseas, setIsOverseas] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
@@ -34,6 +35,7 @@ export function AddPlayerForm({ auctionId, categories, currencySymbol = "₹" }:
         category,
         basePrice: selectedCategory?.basePrice ?? 0,
         auctionId,
+        isOverseas,
       });
       if (result?.error) {
         setError(result.error);
@@ -41,6 +43,7 @@ export function AddPlayerForm({ auctionId, categories, currencySymbol = "₹" }:
         setFullName("");
         setDob("");
         setCricclubsId("");
+        setIsOverseas(false);
         setOpen(false);
         router.refresh();
       }
@@ -93,6 +96,10 @@ export function AddPlayerForm({ auctionId, categories, currencySymbol = "₹" }:
           ))}
         </select>
       </div>
+      <label className="flex items-center gap-1.5 text-xs text-[var(--ink-soft)]">
+        <input type="checkbox" checked={isOverseas} onChange={(e) => setIsOverseas(e.target.checked)} className="rounded" />
+        Overseas / guest player
+      </label>
       {error && <p className="text-xs text-[var(--danger)]">{error}</p>}
       <div className="flex gap-2">
         <button

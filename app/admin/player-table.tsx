@@ -14,6 +14,7 @@ interface Player {
   cricclubs_id_status: string;
   dob: string | null;
   role_override: string | null;
+  is_overseas: boolean;
 }
 
 interface Snapshot {
