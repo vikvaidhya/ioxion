@@ -612,6 +612,7 @@ export interface CricIQUploadResult {
   unmatched: number;
   skipped: number;
   unmatchedNames: string[];
+  unmatchedRows: CricIQRow[];
   skippedReasons: { name: string; reason: string }[];
 }
 
@@ -626,12 +627,63 @@ export interface CricIQUploadResult {
  * rows, never overwrites, preserving full history of what CricIQ reported
  * over time.
  */
+/** Shared insert-shape builder used both for normal matched uploads and
+ * for players created on-the-fly from previously-unmatched CricIQ rows —
+ * keeps the two paths from silently drifting apart. */
+function buildCricIQSnapshotRow(playerId: string, userId: string, row: CricIQRow) {
+  const summaryParts = [
+    row.persona && `Persona: ${row.persona}`,
+    row.superpowers && `Superpowers: ${row.superpowers}`,
+    row.strengths && `Strengths: ${row.strengths}`,
+    row.watchOuts && `Watch outs: ${row.watchOuts}`,
+    row.patterns && `Patterns: ${row.patterns}`,
+  ].filter(Boolean);
+
+  return {
+    player_id: playerId,
+    synced_by: userId,
+    raw_payload: row.raw,
+    summary_text: summaryParts.join(" · "),
+    runs: row.runs,
+    innings: row.innings,
+    not_outs: row.notOuts,
+    batting_avg: row.battingAvg,
+    strike_rate: row.strikeRate,
+    highest_score: row.highestScore,
+    fifties: row.fifties,
+    hundreds: row.hundreds,
+    fours: row.fours,
+    sixes: row.sixes,
+    ducks: row.ducks,
+    boundary_pct: row.boundaryPct,
+    wickets: row.wickets,
+    overs: row.overs,
+    maidens: row.maidens,
+    economy: row.economy,
+    bowling_avg: row.bowlingAvg,
+    bowling_sr: row.bowlingSr,
+    primary_role: row.primaryRole,
+    persona: row.persona,
+    role_basis: row.roleBasis,
+    batting_score: row.battingScore,
+    bowling_score: row.bowlingScore,
+    performance_score: row.performanceScore,
+  };
+}
+
 export async function bulkUploadCricIQAction(rows: CricIQRow[]): Promise<CricIQUploadResult> {
   const user = await getCurrentUser();
   requireRole(user, ["org_admin"]);
   const adminDb = createAdminClient();
 
-  const result: CricIQUploadResult = { matched: 0, unmatched: 0, skipped: 0, unmatchedNames: [], skippedReasons: [] };
+  const result: CricIQUploadResult = {
+    matched: 0,
+    unmatched: 0,
+    skipped: 0,
+    unmatchedNames: [],
+    unmatchedRows: [],
+    skippedReasons: [],
+  };
 
   const { data: orgPlayers } = await adminDb
     .from("players")
@@ -639,7 +691,7 @@ export async function bulkUploadCricIQAction(rows: CricIQRow[]): Promise<CricIQU
     .eq("org_id", user.orgId)
     .not("cricclubs_id", "is", null);
 
-  const playerIdByCricClubsId = new Map(
+  const playerIdByCricClubsId = new Map<string, string>(
     (orgPlayers ?? []).map((p: { id: string; cricclubs_id: string }) => [p.cricclubs_id, p.id])
   );
 
@@ -657,49 +709,16 @@ export async function bulkUploadCricIQAction(rows: CricIQRow[]): Promise<CricIQU
 
     const playerId = playerIdByCricClubsId.get(row.cricclubsId);
     if (!playerId) {
+      // Not an error — this is expected when a CricIQ report includes
+      // players who haven't been added to the pool yet. Return the full
+      // row so the UI can offer "add to pool" without re-uploading.
       result.unmatched++;
       result.unmatchedNames.push(`${row.playerName} (${row.cricclubsId})`);
+      result.unmatchedRows.push(row);
       continue;
     }
 
-    const summaryParts = [
-      row.persona && `Persona: ${row.persona}`,
-      row.superpowers && `Superpowers: ${row.superpowers}`,
-      row.strengths && `Strengths: ${row.strengths}`,
-      row.watchOuts && `Watch outs: ${row.watchOuts}`,
-      row.patterns && `Patterns: ${row.patterns}`,
-    ].filter(Boolean);
-
-    const { error: insertErr } = await adminDb.from("criciq_snapshots").insert({
-      player_id: playerId,
-      synced_by: user.userId,
-      raw_payload: row.raw,
-      summary_text: summaryParts.join(" · "),
-      runs: row.runs,
-      innings: row.innings,
-      not_outs: row.notOuts,
-      batting_avg: row.battingAvg,
-      strike_rate: row.strikeRate,
-      highest_score: row.highestScore,
-      fifties: row.fifties,
-      hundreds: row.hundreds,
-      fours: row.fours,
-      sixes: row.sixes,
-      ducks: row.ducks,
-      boundary_pct: row.boundaryPct,
-      wickets: row.wickets,
-      overs: row.overs,
-      maidens: row.maidens,
-      economy: row.economy,
-      bowling_avg: row.bowlingAvg,
-      bowling_sr: row.bowlingSr,
-      primary_role: row.primaryRole,
-      persona: row.persona,
-      role_basis: row.roleBasis,
-      batting_score: row.battingScore,
-      bowling_score: row.bowlingScore,
-      performance_score: row.performanceScore,
-    });
+    const { error: insertErr } = await adminDb.from("criciq_snapshots").insert(buildCricIQSnapshotRow(playerId, user.userId, row));
 
     if (insertErr) {
       Sentry.captureException(insertErr, { tags: { area: "criciq_upload" }, extra: { cricclubsId: row.cricclubsId } });
@@ -707,6 +726,96 @@ export async function bulkUploadCricIQAction(rows: CricIQRow[]): Promise<CricIQU
       result.skippedReasons.push({ name: row.playerName, reason: insertErr.message });
     } else {
       result.matched++;
+    }
+  }
+
+  revalidatePath("/admin");
+  return result;
+}
+
+export interface AddUnmatchedResult {
+  added: number;
+  failed: number;
+  errors: { name: string; message: string }[];
+}
+
+/**
+ * Takes previously-unmatched CricIQ rows (full data, not just names — the
+ * client already has this from its own parsed CSV, so no need to re-parse
+ * or re-upload) and, for each one: creates the player, enters them into
+ * the auction pool under the given category, and immediately writes their
+ * CricIQ snapshot — all in one step, so the Admin never has to re-run the
+ * CricIQ upload after adding players it flagged as missing.
+ */
+export async function addUnmatchedCricIQPlayersAction(
+  auctionId: string,
+  rows: CricIQRow[],
+  category: string
+): Promise<AddUnmatchedResult> {
+  const user = await getCurrentUser();
+  requireRole(user, ["org_admin"]);
+  const adminDb = createAdminClient();
+
+  const result: AddUnmatchedResult = { added: 0, failed: 0, errors: [] };
+
+  const { data: ruleset } = await adminDb
+    .from("auction_rulesets")
+    .select("categories")
+    .eq("auction_id", auctionId)
+    .single();
+  const categories = (ruleset?.categories as { name: string; basePrice: number }[]) ?? [];
+  const matchedCategory = categories.find((c) => c.name === category) ?? categories[0];
+
+  if (!matchedCategory) {
+    return { added: 0, failed: rows.length, errors: rows.map((r) => ({ name: r.playerName, message: "No category configured." })) };
+  }
+
+  for (const row of rows) {
+    try {
+      const { data: player, error: playerErr } = await adminDb
+        .from("players")
+        .insert({
+          org_id: user.orgId,
+          full_name: row.playerName,
+          cricclubs_id: row.cricclubsId,
+          cricclubs_id_status: "unverified",
+          cricclubs_id_source: "admin_import",
+        })
+        .select()
+        .single();
+      if (playerErr) {
+        result.failed++;
+        result.errors.push({ name: row.playerName, message: playerErr.message });
+        continue;
+      }
+
+      const { error: poolErr } = await adminDb.from("auction_players").insert({
+        auction_id: auctionId,
+        player_id: player.id,
+        category: matchedCategory.name,
+        base_price: matchedCategory.basePrice,
+        status: "pending",
+      });
+      if (poolErr) {
+        result.failed++;
+        result.errors.push({ name: row.playerName, message: poolErr.message });
+        continue;
+      }
+
+      const { error: snapshotErr } = await adminDb
+        .from("criciq_snapshots")
+        .insert(buildCricIQSnapshotRow(player.id, user.userId, row));
+      if (snapshotErr) {
+        result.failed++;
+        result.errors.push({ name: row.playerName, message: snapshotErr.message });
+        continue;
+      }
+
+      result.added++;
+    } catch (err) {
+      result.failed++;
+      result.errors.push({ name: row.playerName, message: err instanceof Error ? err.message : "Unknown error" });
+      Sentry.captureException(err, { tags: { area: "add_unmatched_criciq_players" } });
     }
   }
 

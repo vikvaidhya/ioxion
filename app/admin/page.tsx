@@ -319,7 +319,7 @@ export default async function AdminDashboard() {
             </div>
             <div className="flex items-center gap-2">
               <BulkUploadPlayersForm auctionId={auction.id} categories={categories} />
-              <CricIQUploadForm />
+              <CricIQUploadForm auctionId={auction.id} categories={categories} />
               <SyncButton />
             </div>
           </div>

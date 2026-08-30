@@ -3,8 +3,8 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Papa from "papaparse";
-import { bulkUploadCricIQAction, type CricIQRow, type CricIQUploadResult } from "./setup-actions";
-import { Sparkles, FileText, ClipboardPaste, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { bulkUploadCricIQAction, addUnmatchedCricIQPlayersAction, type CricIQRow, type CricIQUploadResult, type AddUnmatchedResult } from "./setup-actions";
+import { Sparkles, FileText, ClipboardPaste, AlertTriangle, CheckCircle2, UserPlus, X } from "lucide-react";
 
 interface ParsedCricIQRow extends CricIQRow {
   valid: boolean;
@@ -77,7 +77,12 @@ function rowsFromParseResult(results: Papa.ParseResult<Record<string, string>>):
 
 const parseConfig = { header: true as const, skipEmptyLines: true as const, transformHeader };
 
-export function CricIQUploadForm() {
+interface Props {
+  auctionId: string;
+  categories: { name: string; basePrice: number }[];
+}
+
+export function CricIQUploadForm({ auctionId, categories }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<"file" | "paste">("file");
@@ -87,6 +92,10 @@ export function CricIQUploadForm() {
   const [parseError, setParseError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [result, setResult] = useState<CricIQUploadResult | null>(null);
+  const [addCategory, setAddCategory] = useState(categories[0]?.name ?? "");
+  const [isAddingPending, startAddingTransition] = useTransition();
+  const [addResult, setAddResult] = useState<AddUnmatchedResult | null>(null);
+  const [dismissedUnmatched, setDismissedUnmatched] = useState(false);
 
   const validCount = rows.filter((r) => r.valid).length;
 
@@ -122,9 +131,20 @@ export function CricIQUploadForm() {
     startTransition(async () => {
       const res = await bulkUploadCricIQAction(validRows);
       setResult(res);
+      setAddResult(null);
+      setDismissedUnmatched(false);
       setRows([]);
       setSourceLabel("");
       setPasteText("");
+      router.refresh();
+    });
+  };
+
+  const handleAddUnmatched = () => {
+    if (!result || result.unmatchedRows.length === 0) return;
+    startAddingTransition(async () => {
+      const res = await addUnmatchedCricIQPlayersAction(auctionId, result.unmatchedRows, addCategory);
+      setAddResult(res);
       router.refresh();
     });
   };
@@ -135,6 +155,8 @@ export function CricIQUploadForm() {
     setSourceLabel("");
     setPasteText("");
     setResult(null);
+    setAddResult(null);
+    setDismissedUnmatched(false);
     setParseError(null);
   };
 
@@ -156,7 +178,7 @@ export function CricIQUploadForm() {
       </h3>
       <p className="text-xs text-[var(--ink-soft)]">
         Export a tournament report from CricIQ and upload it here. Players are matched by CricClubs ID —
-        rows for players not yet in your pool are skipped and listed below.
+        anyone in the report but not yet in your pool can be added on the spot after upload.
       </p>
 
       <div className="flex gap-1 border-b border-[var(--brand-soft)]">
@@ -183,18 +205,74 @@ export function CricIQUploadForm() {
           <p className="font-semibold flex items-center gap-1.5 mb-1">
             <CheckCircle2 size={14} className="text-[var(--brand)]" />
             Matched {result.matched} player{result.matched !== 1 ? "s" : ""}
-            {result.unmatched > 0 && ` · ${result.unmatched} not found in pool`}
+            {result.unmatched > 0 && ` · ${result.unmatched} not in pool yet`}
             {result.skipped > 0 && ` · ${result.skipped} skipped`}
           </p>
-          {result.unmatchedNames.length > 0 && (
-            <p className="text-xs text-[var(--ink-soft)] mt-1">Not in pool: {result.unmatchedNames.slice(0, 8).join(", ")}{result.unmatchedNames.length > 8 && "…"}</p>
-          )}
           {result.skippedReasons.length > 0 && (
             <ul className="text-xs text-[var(--danger)] mt-1 space-y-0.5">
               {result.skippedReasons.slice(0, 8).map((s, i) => (
                 <li key={i}>{s.name}: {s.reason}</li>
               ))}
             </ul>
+          )}
+
+          {result.unmatchedRows.length > 0 && !dismissedUnmatched && !addResult && (
+            <div className="mt-3 pt-3 border-t border-[var(--brand-soft)]">
+              <p className="text-xs text-[var(--ink-soft)] mb-2">
+                These players are in the report but not in your pool yet — add them, applying their
+                CricIQ stats immediately, or discard and leave them out.
+              </p>
+              <ul className="text-xs text-[var(--ink-soft)] mb-2 space-y-0.5 max-h-24 overflow-y-auto">
+                {result.unmatchedRows.map((r, i) => (
+                  <li key={i}>
+                    {r.playerName} <span className="font-mono text-[var(--ink-faint)]">({r.cricclubsId})</span>
+                  </li>
+                ))}
+              </ul>
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={addCategory}
+                  onChange={(e) => setAddCategory(e.target.value)}
+                  className="px-2 py-1.5 rounded border border-[var(--line)] text-xs"
+                >
+                  {categories.map((c) => (
+                    <option key={c.name} value={c.name}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={handleAddUnmatched}
+                  disabled={isAddingPending}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded bg-[var(--brand)] text-white text-xs font-semibold disabled:opacity-50"
+                >
+                  <UserPlus size={12} />
+                  {isAddingPending ? "Adding…" : `Add ${result.unmatchedRows.length} to pool`}
+                </button>
+                <button
+                  onClick={() => setDismissedUnmatched(true)}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded border border-[var(--line)] text-xs font-semibold text-[var(--ink-soft)]"
+                >
+                  <X size={12} /> Discard
+                </button>
+              </div>
+            </div>
+          )}
+
+          {addResult && (
+            <div className="mt-3 pt-3 border-t border-[var(--brand-soft)] text-xs">
+              <p className="font-semibold text-[var(--brand)]">
+                ✓ Added {addResult.added} player{addResult.added !== 1 ? "s" : ""} to the pool
+                {addResult.failed > 0 && ` · ${addResult.failed} failed`}
+              </p>
+              {addResult.errors.length > 0 && (
+                <ul className="text-[var(--danger)] mt-1 space-y-0.5">
+                  {addResult.errors.slice(0, 8).map((e, i) => (
+                    <li key={i}>{e.name}: {e.message}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
           )}
         </div>
       )}
