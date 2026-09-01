@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState, useRef, useTransition } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useLiveAuction } from "@/lib/hooks/useLiveAuction";
 import { useCountdown } from "@/lib/hooks/useCountdown";
 import { openNextLotAction, resolveLotAction, voidBidAction } from "./actions";
-import { Gavel, Play, CheckCircle2, XCircle, Ban, Shield } from "lucide-react";
+import { Gavel, Play, CheckCircle2, XCircle, Ban, Shield, Volume2, VolumeX } from "lucide-react";
 import { RoleScoreBadge } from "@/components/role-score-badge";
+import { useAuctionSoundEffects } from "@/lib/hooks/useAuctionSoundEffects";
 
 interface Props {
   auction: { id: string; name: string; status: string; public_link_token: string };
@@ -19,6 +20,26 @@ interface Props {
 export function AuctioneerConsole({ auction, ruleset, teams: initialTeams, initialLots, orgName }: Props) {
   const { openLot, bids, highBid } = useLiveAuction(auction.id);
   const secondsLeft = useCountdown(openLot?.closes_at ?? null);
+  const [justResolved, setJustResolved] = useState<"sold" | "unsold" | null>(null);
+  const prevOpenLot = useRef<{ id: string; hadBid: boolean } | null>(null);
+
+  useEffect(() => {
+    if (openLot === null && prevOpenLot.current) {
+      setJustResolved(prevOpenLot.current.hadBid ? "sold" : "unsold");
+      setTimeout(() => setJustResolved(null), 2000);
+      prevOpenLot.current = null;
+    } else if (openLot) {
+      prevOpenLot.current = { id: openLot.id, hadBid: !!highBid };
+    }
+  }, [openLot, highBid]);
+
+  const { soundOn, toggleSound } = useAuctionSoundEffects({
+    lotId: openLot?.id ?? null,
+    highBidAmount: highBid?.amount ?? null,
+    secondsLeft,
+    soldJustNow: justResolved === "sold",
+    unsoldJustNow: justResolved === "unsold",
+  });
   const [isPending, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
   const [player, setPlayer] = useState<{ full_name: string; category: string; base_price: number } | null>(null);
@@ -190,6 +211,13 @@ export function AuctioneerConsole({ auction, ruleset, teams: initialTeams, initi
             <span>{soldCount} sold</span>
             <span>·</span>
             <span>{unsoldCount} unsold</span>
+            <button
+              onClick={toggleSound}
+              className="ml-1 p-1.5 rounded-full border border-[var(--line)] text-[var(--ink-faint)] hover:text-[var(--brand)] hover:border-[var(--brand)] transition-colors"
+              title={soundOn ? "Mute sound effects" : "Enable sound effects"}
+            >
+              {soundOn ? <Volume2 size={13} /> : <VolumeX size={13} />}
+            </button>
           </div>
         </div>
       </div>

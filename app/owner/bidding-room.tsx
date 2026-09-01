@@ -1,14 +1,15 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState, useRef, useTransition } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useLiveAuction } from "@/lib/hooks/useLiveAuction";
 import { useCountdown } from "@/lib/hooks/useCountdown";
 import { placeBidAction } from "./actions";
 import { nextValidBid, maxPossibleBid, type Category } from "@/lib/auction/rules";
-import { Gavel, Wallet, Users, Timer, TrendingUp, Sparkles } from "lucide-react";
+import { Gavel, Wallet, Users, Timer, TrendingUp, Sparkles, Volume2, VolumeX } from "lucide-react";
 import { CricIQStatsPanel } from "@/components/criciq-stats-panel";
 import { RoleScoreBadge } from "@/components/role-score-badge";
+import { useAuctionSoundEffects } from "@/lib/hooks/useAuctionSoundEffects";
 
 interface Props {
   team: { id: string; name: string; purse_remaining: number; auction_id: string };
@@ -59,6 +60,26 @@ export function OwnerBiddingRoom({ team: initialTeam, ruleset, squadCount: initi
   const [squadCount, setSquadCount] = useState(initialSquadCount);
   const { openLot, bids, highBid } = useLiveAuction(team.auction_id);
   const secondsLeft = useCountdown(openLot?.closes_at ?? null);
+  const [justResolved, setJustResolved] = useState<"sold" | "unsold" | null>(null);
+  const prevOpenLot = useRef<{ id: string; hadBid: boolean } | null>(null);
+
+  useEffect(() => {
+    if (openLot === null && prevOpenLot.current) {
+      setJustResolved(prevOpenLot.current.hadBid ? "sold" : "unsold");
+      setTimeout(() => setJustResolved(null), 2000);
+      prevOpenLot.current = null;
+    } else if (openLot) {
+      prevOpenLot.current = { id: openLot.id, hadBid: !!highBid };
+    }
+  }, [openLot, highBid]);
+
+  const { soundOn, toggleSound } = useAuctionSoundEffects({
+    lotId: openLot?.id ?? null,
+    highBidAmount: highBid?.amount ?? null,
+    secondsLeft,
+    soldJustNow: justResolved === "sold",
+    unsoldJustNow: justResolved === "unsold",
+  });
   const [player, setPlayer] = useState<PlayerInfo | null>(null);
   const [criciq, setCriciq] = useState<CricIQInfo | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -229,11 +250,34 @@ export function OwnerBiddingRoom({ team: initialTeam, ruleset, squadCount: initi
               <Users size={14} />
               <span className="font-mono">{squadCount}/{ruleset?.max_squad_size}</span>
             </div>
+            <button
+              onClick={toggleSound}
+              className="p-1.5 rounded-full border border-[var(--line)] text-[var(--ink-faint)] hover:text-[var(--brand)] hover:border-[var(--brand)] transition-colors"
+              title={soundOn ? "Mute sound effects" : "Enable sound effects"}
+            >
+              {soundOn ? <Volume2 size={13} /> : <VolumeX size={13} />}
+            </button>
           </div>
         </div>
+        <div
+          className="h-1"
+          style={{
+            background:
+              "linear-gradient(90deg, transparent, var(--brand-soft) 20%, var(--brand-soft) 80%, transparent)",
+          }}
+        />
       </div>
 
       <div className="max-w-2xl mx-auto px-6 py-8">
+        {justResolved && (
+          <div
+            className={`text-center py-3 mb-4 rounded-lg font-display font-semibold text-lg tracking-wide ${
+              justResolved === "sold" ? "bg-[var(--brand-soft)] text-[var(--brand)]" : "bg-[var(--warning-soft)] text-[var(--warning)]"
+            }`}
+          >
+            {justResolved === "sold" ? "SOLD!" : "UNSOLD"}
+          </div>
+        )}
         {!openLot || !player ? (
           <div className="text-center py-24 text-[var(--ink-soft)]">
             <Gavel size={32} className="mx-auto mb-3 opacity-40" />
