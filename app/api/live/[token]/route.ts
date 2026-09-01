@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
+import { resolveExpiredLot } from "@/lib/auction/resolve-lot";
 
 /**
  * Public, unauthenticated endpoint — read-only projection of the currently
@@ -8,6 +9,14 @@ import { createAdminClient } from "@/lib/supabase/server";
  * name). Polled by the public live view every couple seconds rather than
  * using Realtime directly, so we never have to grant anonymous users RLS
  * access to the underlying tables.
+ *
+ * Also doubles as a resolution safety net: every poll checks whether the
+ * currently open lot's timer has expired and, if so, resolves it right
+ * here before building the response. This means as long as the public
+ * live link is open anywhere (very likely during a real event — it's
+ * usually left up on a shared screen), lots resolve within ~2 seconds
+ * regardless of whether the Auctioneer's own tab is active or how often
+ * the pg_cron backup job happens to run.
  */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
@@ -23,12 +32,21 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ toke
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const { data: openLot } = await supabase
+  let { data: openLot } = await supabase
     .from("lots")
     .select("id, sequence_number, status, closes_at, auction_player_id")
     .eq("auction_id", auction.id)
     .eq("status", "open")
     .maybeSingle();
+
+  if (openLot?.closes_at && new Date(openLot.closes_at) <= new Date()) {
+    const result = await resolveExpiredLot(supabase, openLot.id);
+    if (result.resolved) {
+      // Lot just changed status — re-fetch so the response reflects the
+      // resolution instead of showing a stale "open" state for one poll.
+      openLot = null;
+    }
+  }
 
   let player = null;
   let highBid = null;

@@ -109,6 +109,12 @@ export function PublicLiveView({ auction, ruleset, teams }: Props) {
         </div>
       )}
 
+      {state?.auction.status === "paused" && (
+        <div className="relative bg-[#5C4A22] text-[#E8D9A8] text-xs font-semibold text-center py-2 px-4">
+          Bidding is currently paused
+        </div>
+      )}
+
       <div className="relative max-w-2xl mx-auto px-6 py-10">
         {!state?.player ? (
           <div className="text-center py-24 text-white/40">Waiting for the next player…</div>

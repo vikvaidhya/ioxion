@@ -10,6 +10,7 @@ import { Gavel, Wallet, Users, Timer, TrendingUp, Sparkles, Volume2, VolumeX } f
 import { CricIQStatsPanel } from "@/components/criciq-stats-panel";
 import { RoleScoreBadge } from "@/components/role-score-badge";
 import { useAuctionSoundEffects } from "@/lib/hooks/useAuctionSoundEffects";
+import { useAuctionStatus } from "@/lib/hooks/useAuctionStatus";
 
 interface Props {
   team: { id: string; name: string; purse_remaining: number; auction_id: string };
@@ -80,6 +81,7 @@ export function OwnerBiddingRoom({ team: initialTeam, ruleset, squadCount: initi
     soldJustNow: justResolved === "sold",
     unsoldJustNow: justResolved === "unsold",
   });
+  const auctionStatus = useAuctionStatus(team.auction_id);
   const [player, setPlayer] = useState<PlayerInfo | null>(null);
   const [criciq, setCriciq] = useState<CricIQInfo | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -230,7 +232,7 @@ export function OwnerBiddingRoom({ team: initialTeam, ruleset, squadCount: initi
   };
 
   const isMyTeamHighBidder = highBid?.team_id === team.id;
-  const canBid = openLot?.status === "open" && (secondsLeft ?? 0) > 0 && nextBid <= cap && !isMyTeamHighBidder;
+  const canBid = openLot?.status === "open" && (secondsLeft ?? 0) > 0 && nextBid <= cap && !isMyTeamHighBidder && auctionStatus !== "paused";
 
   return (
     <div className="min-h-screen bg-[var(--paper)]">
@@ -269,6 +271,11 @@ export function OwnerBiddingRoom({ team: initialTeam, ruleset, squadCount: initi
       </div>
 
       <div className="max-w-2xl mx-auto px-6 py-8">
+        {auctionStatus === "paused" && (
+          <div className="text-center py-2.5 mb-4 rounded-lg bg-[var(--warning-soft)] text-[var(--warning)] text-sm font-semibold">
+            Bidding is paused by the Auctioneer
+          </div>
+        )}
         {justResolved && (
           <div
             className={`text-center py-3 mb-4 rounded-lg font-display font-semibold text-lg tracking-wide ${
@@ -359,7 +366,7 @@ export function OwnerBiddingRoom({ team: initialTeam, ruleset, squadCount: initi
                   secondsLeft && secondsLeft <= 3 ? "text-[var(--danger)]" : "text-[var(--ink-soft)]"
                 }`}
               >
-                {secondsLeft ?? "—"}s
+                {auctionStatus === "paused" ? "Paused" : `${secondsLeft ?? "—"}s`}
               </span>
             </div>
 
@@ -372,6 +379,8 @@ export function OwnerBiddingRoom({ team: initialTeam, ruleset, squadCount: initi
                 <TrendingUp size={18} />
                 {isPending
                   ? "Placing bid…"
+                  : auctionStatus === "paused"
+                  ? "Bidding paused"
                   : isMyTeamHighBidder
                   ? "You're leading"
                   : `Bid ${fmt(nextBid)}`}

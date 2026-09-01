@@ -4,6 +4,7 @@ import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { getCurrentUser, requireRole } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import * as Sentry from "@sentry/nextjs";
+import { resolveExpiredLot } from "@/lib/auction/resolve-lot";
 
 /**
  * NOTE on admin client usage: every exported function here is gated by
@@ -25,6 +26,11 @@ export async function openNextLotAction(auctionId: string) {
   requireRole(user, ["auctioneer", "org_admin"]);
   const supabase = await createClient();
   const adminDb = createAdminClient();
+
+  const { data: auction } = await supabase.from("auctions").select("status").eq("id", auctionId).single();
+  if (auction?.status === "paused") {
+    return { error: "Auction is paused — resume it before opening a lot." };
+  }
 
   const { data: alreadyOpen } = await supabase
     .from("lots")
@@ -54,6 +60,13 @@ export async function openNextLotAction(auctionId: string) {
 
   if (!nextLot) {
     return { error: "No more queued lots." };
+  }
+
+  // First lot of the auction — flip the auction from draft/configured to
+  // live. Nothing did this before, which meant e.g. the retention lock
+  // ("can't change retentions once live") never actually engaged.
+  if (auction && ["draft", "configured"].includes(auction.status)) {
+    await adminDb.from("auctions").update({ status: "live" }).eq("id", auctionId);
   }
 
   const closesAt = new Date(Date.now() + (ruleset?.soft_close_seconds ?? 10) * 1000);
@@ -90,7 +103,7 @@ export async function resolveLotAction(lotId: string) {
 
   const { data: lot } = await supabase
     .from("lots")
-    .select("id, auction_id, auction_player_id, status, closes_at")
+    .select("id, auction_id, status, closes_at")
     .eq("id", lotId)
     .single();
 
@@ -101,59 +114,15 @@ export async function resolveLotAction(lotId: string) {
 
   const { data: highBid } = await supabase
     .from("bids")
-    .select("id, team_id, amount")
+    .select("team_id, amount")
     .eq("lot_id", lotId)
     .eq("is_voided", false)
     .order("amount", { ascending: false })
     .limit(1)
     .maybeSingle();
 
-  if (!highBid) {
-    // Unsold
-    const { error: lotErr } = await adminDb.from("lots").update({ status: "unsold", closed_at: new Date().toISOString() }).eq("id", lotId);
-    const { error: playerErr } = await adminDb
-      .from("auction_players")
-      .update({ status: "unsold" })
-      .eq("id", lot.auction_player_id);
-
-    if (lotErr || playerErr) {
-      Sentry.captureException(new Error("Failed to mark lot unsold"), {
-        tags: { area: "lot_resolution" },
-        extra: { lotId, lotErr, playerErr },
-      });
-    }
-  } else {
-    // Sold — update lot, auction_player, and deduct from team purse
-    const { error: lotErr } = await adminDb
-      .from("lots")
-      .update({ status: "sold", closed_at: new Date().toISOString(), current_high_bid_id: highBid.id })
-      .eq("id", lotId);
-    const { error: playerErr } = await adminDb
-      .from("auction_players")
-      .update({ status: "sold", sold_to_team_id: highBid.team_id, sold_price: highBid.amount })
-      .eq("id", lot.auction_player_id);
-
-    const { data: team } = await supabase.from("teams").select("purse_remaining").eq("id", highBid.team_id).single();
-    let purseErr = null;
-    if (team) {
-      const res = await adminDb
-        .from("teams")
-        .update({ purse_remaining: team.purse_remaining - highBid.amount })
-        .eq("id", highBid.team_id);
-      purseErr = res.error;
-    }
-
-    // This block moves real money (purse deduction) — any failure here is
-    // high-severity: it could mean a team's purse and their actual squad
-    // no longer agree, which corrupts the auction's core invariant.
-    if (lotErr || playerErr || purseErr || !team) {
-      Sentry.captureException(new Error("Failed to complete lot sale — purse/squad state may be inconsistent"), {
-        level: "error",
-        tags: { area: "lot_resolution", critical: "true" },
-        extra: { lotId, teamId: highBid.team_id, amount: highBid.amount, lotErr, playerErr, purseErr, teamFound: !!team },
-      });
-    }
-  }
+  const result = await resolveExpiredLot(adminDb, lotId);
+  if (!result.resolved) return { error: result.error ?? "Could not resolve — it may already be resolved." };
 
   await adminDb.from("audit_log").insert({
     org_id: user.orgId,
@@ -192,5 +161,85 @@ export async function voidBidAction(bidId: string, reason: string) {
   });
 
   revalidatePath("/auctioneer");
+  return { success: true };
+}
+
+/**
+ * Pauses the auction. If a lot is currently open, its remaining countdown
+ * time is captured and closes_at is cleared — this isn't just cosmetic:
+ * with closes_at null, the pg_cron safety-net job (which only resolves
+ * lots where closes_at < now()) can never auto-resolve it while paused,
+ * and the countdown display naturally shows "paused" instead of
+ * misleadingly ticking toward zero.
+ */
+export async function pauseAuctionAction(auctionId: string) {
+  const user = await getCurrentUser();
+  requireRole(user, ["auctioneer", "org_admin"]);
+  const adminDb = createAdminClient();
+
+  const { data: openLot } = await adminDb
+    .from("lots")
+    .select("id, closes_at")
+    .eq("auction_id", auctionId)
+    .eq("status", "open")
+    .maybeSingle();
+
+  if (openLot && openLot.closes_at) {
+    const remaining = Math.max(0, Math.round((new Date(openLot.closes_at).getTime() - Date.now()) / 1000));
+    await adminDb
+      .from("lots")
+      .update({ closes_at: null, frozen_seconds_remaining: remaining })
+      .eq("id", openLot.id);
+  }
+
+  const { error } = await adminDb.from("auctions").update({ status: "paused" }).eq("id", auctionId);
+  if (error) return { error: error.message };
+
+  await adminDb.from("audit_log").insert({
+    org_id: user.orgId,
+    auction_id: auctionId,
+    actor_user_id: user.userId,
+    action: "auction.paused",
+  });
+
+  revalidatePath("/auctioneer");
+  revalidatePath("/owner");
+  return { success: true };
+}
+
+/** Resumes a paused auction — restores the open lot's timer from where it was frozen, not a fresh full duration. */
+export async function resumeAuctionAction(auctionId: string) {
+  const user = await getCurrentUser();
+  requireRole(user, ["auctioneer", "org_admin"]);
+  const adminDb = createAdminClient();
+
+  const { data: frozenLot } = await adminDb
+    .from("lots")
+    .select("id, frozen_seconds_remaining")
+    .eq("auction_id", auctionId)
+    .eq("status", "open")
+    .not("frozen_seconds_remaining", "is", null)
+    .maybeSingle();
+
+  if (frozenLot) {
+    const newClosesAt = new Date(Date.now() + (frozenLot.frozen_seconds_remaining ?? 10) * 1000);
+    await adminDb
+      .from("lots")
+      .update({ closes_at: newClosesAt.toISOString(), frozen_seconds_remaining: null })
+      .eq("id", frozenLot.id);
+  }
+
+  const { error } = await adminDb.from("auctions").update({ status: "live" }).eq("id", auctionId);
+  if (error) return { error: error.message };
+
+  await adminDb.from("audit_log").insert({
+    org_id: user.orgId,
+    auction_id: auctionId,
+    actor_user_id: user.userId,
+    action: "auction.resumed",
+  });
+
+  revalidatePath("/auctioneer");
+  revalidatePath("/owner");
   return { success: true };
 }

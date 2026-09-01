@@ -65,17 +65,25 @@ $$ language plpgsql security definer;
 -- plans, including free tier, but must be enabled once via the dashboard:
 -- Database -> Extensions -> search "pg_cron" -> Enable).
 --
--- NOTE on granularity: pg_cron's underlying scheduler supports 6-field
--- cron expressions (including seconds) on current Supabase Postgres
--- versions. If your project's pg_cron version only supports minute-level
--- scheduling, change '*/5 * * * * *' to '* * * * *' (every minute) — lots
--- will still resolve automatically, just with up to ~60s extra latency
--- instead of ~5s. Given a 10s soft-close timer, 5-second granularity is
--- what actually keeps the auction feeling snappy.
+-- IMPORTANT — confirmed in production: on at least some Supabase Postgres
+-- versions, the 6-field "with seconds" syntax ('*/5 * * * * *') is NOT
+-- honored as every-5-seconds — pg_cron silently falls back to treating it
+-- as standard 5-field cron and runs every 5 MINUTES instead, with no
+-- error or warning. This is real, not theoretical: it happened on a live
+-- deployment and caused lots to sit unresolved for minutes. Using the
+-- standard, universally-supported 1-minute cadence instead. This job is
+-- a backup safety net, not the primary resolution path — see
+-- lib/auction/resolve-lot.ts and its call sites (Auctioneer's own
+-- client-side auto-trigger, and the public live view's / useLiveAuction's
+-- polling) for the actual near-instant resolution paths. ALWAYS verify
+-- actual run cadence after setup:
+--   select status, start_time from cron.job_run_details
+--   order by start_time desc limit 10;
+-- and confirm consecutive start_time values are ~60s apart, not ~300s.
 
 select cron.schedule(
   'resolve-expired-lots',
-  '*/5 * * * * *',
+  '* * * * *',
   $$ select resolve_expired_lots(); $$
 );
 

@@ -1055,3 +1055,107 @@ export async function setPlayerOverseasAction(playerId: string, isOverseas: bool
   revalidatePath("/admin");
   return { success: true };
 }
+
+/**
+ * Resets an auction back to its pre-bidding state — every lot returns to
+ * 'queued', every bid is permanently deleted, and every player won
+ * through live bidding goes back to 'pending'. Purses are recalculated
+ * from scratch. Intended for demos/rehearsals, not for a real auction
+ * that's actually happened — this is destructive and cannot be undone.
+ *
+ * Pre-draft retentions are preserved by default (they're deliberate
+ * setup, not "auction progress" in the same sense as live bids), unless
+ * clearRetentions is explicitly set.
+ */
+export async function resetAuctionAction(auctionId: string, clearRetentions: boolean) {
+  const user = await getCurrentUser();
+  requireRole(user, ["org_admin"]);
+  const adminDb = createAdminClient();
+
+  const { data: ruleset } = await adminDb
+    .from("auction_rulesets")
+    .select("purse_per_team")
+    .eq("auction_id", auctionId)
+    .single();
+  if (!ruleset) return { error: "Ruleset not found." };
+
+  // 1. Delete every bid on every lot in this auction — a full reset, not
+  // a soft void, since the point is a clean demo slate.
+  const { data: lotIds } = await adminDb.from("lots").select("id").eq("auction_id", auctionId);
+  if (lotIds && lotIds.length > 0) {
+    await adminDb
+      .from("bids")
+      .delete()
+      .in("lot_id", lotIds.map((l: { id: string }) => l.id));
+  }
+
+  // 2. Every lot back to queued, fully cleared.
+  await adminDb
+    .from("lots")
+    .update({
+      status: "queued",
+      opened_at: null,
+      closes_at: null,
+      closed_at: null,
+      current_high_bid_id: null,
+      frozen_seconds_remaining: null,
+      version: 0,
+    })
+    .eq("auction_id", auctionId);
+
+  // 3. auction_players: either wipe everything (including retentions) or
+  // only the ones actually won through live bidding.
+  if (clearRetentions) {
+    await adminDb
+      .from("auction_players")
+      .update({
+        status: "pending",
+        sold_to_team_id: null,
+        sold_price: null,
+        is_retained: false,
+        retained_by_team_id: null,
+      })
+      .eq("auction_id", auctionId);
+  } else {
+    await adminDb
+      .from("auction_players")
+      .update({ status: "pending", sold_to_team_id: null, sold_price: null })
+      .eq("auction_id", auctionId)
+      .eq("is_retained", false);
+  }
+
+  // 4. Recompute every team's purse from scratch: full purse minus
+  // whatever retentions still stand (zero if retentions were also cleared).
+  const { data: teams } = await adminDb.from("teams").select("id").eq("auction_id", auctionId);
+  for (const team of teams ?? []) {
+    let retainedSpend = 0;
+    if (!clearRetentions) {
+      const { data: retained } = await adminDb
+        .from("auction_players")
+        .select("sold_price")
+        .eq("auction_id", auctionId)
+        .eq("sold_to_team_id", team.id)
+        .eq("is_retained", true);
+      retainedSpend = (retained ?? []).reduce((sum: number, r: { sold_price: number | null }) => sum + (r.sold_price ?? 0), 0);
+    }
+    await adminDb.from("teams").update({ purse_remaining: ruleset.purse_per_team - retainedSpend }).eq("id", team.id);
+  }
+
+  // 5. Auction lifecycle back to draft — this also means the "flip to
+  // live on first lot open" logic (openNextLotAction) will fire cleanly
+  // again on the next run-through.
+  await adminDb.from("auctions").update({ status: "draft" }).eq("id", auctionId);
+
+  await adminDb.from("audit_log").insert({
+    org_id: user.orgId,
+    auction_id: auctionId,
+    actor_user_id: user.userId,
+    action: "auction.reset",
+    metadata: { clearRetentions },
+  });
+
+  revalidatePath("/admin");
+  revalidatePath("/auctioneer");
+  revalidatePath("/owner");
+  return { success: true };
+}

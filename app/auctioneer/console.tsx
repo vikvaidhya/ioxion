@@ -4,10 +4,11 @@ import { useEffect, useState, useRef, useTransition } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useLiveAuction } from "@/lib/hooks/useLiveAuction";
 import { useCountdown } from "@/lib/hooks/useCountdown";
-import { openNextLotAction, resolveLotAction, voidBidAction } from "./actions";
-import { Gavel, Play, CheckCircle2, XCircle, Ban, Shield, Volume2, VolumeX } from "lucide-react";
+import { openNextLotAction, resolveLotAction, voidBidAction, pauseAuctionAction, resumeAuctionAction } from "./actions";
+import { Gavel, Play, CheckCircle2, XCircle, Ban, Shield, Volume2, VolumeX, Pause, PlayCircle } from "lucide-react";
 import { RoleScoreBadge } from "@/components/role-score-badge";
 import { useAuctionSoundEffects } from "@/lib/hooks/useAuctionSoundEffects";
+import { useAuctionStatus } from "@/lib/hooks/useAuctionStatus";
 
 interface Props {
   auction: { id: string; name: string; status: string; public_link_token: string };
@@ -42,6 +43,17 @@ export function AuctioneerConsole({ auction, ruleset, teams: initialTeams, initi
   });
   const [isPending, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
+  const auctionStatus = useAuctionStatus(auction.id, auction.status);
+  const [isPausePending, startPauseTransition] = useTransition();
+
+  const handlePauseToggle = () => {
+    setMessage(null);
+    startPauseTransition(async () => {
+      const result =
+        auctionStatus === "paused" ? await resumeAuctionAction(auction.id) : await pauseAuctionAction(auction.id);
+      if (result?.error) setMessage(result.error);
+    });
+  };
   const [player, setPlayer] = useState<{ full_name: string; category: string; base_price: number } | null>(null);
   const [criciq, setCriciq] = useState<{
     primaryRole: string | null;
@@ -218,8 +230,25 @@ export function AuctioneerConsole({ auction, ruleset, teams: initialTeams, initi
             >
               {soundOn ? <Volume2 size={13} /> : <VolumeX size={13} />}
             </button>
+            <button
+              onClick={handlePauseToggle}
+              disabled={isPausePending}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors disabled:opacity-50 ${
+                auctionStatus === "paused"
+                  ? "bg-[var(--brand)] text-white border-[var(--brand)]"
+                  : "border-[var(--line)] text-[var(--ink-soft)] hover:border-[var(--warning)] hover:text-[var(--warning)]"
+              }`}
+            >
+              {auctionStatus === "paused" ? <PlayCircle size={13} /> : <Pause size={13} />}
+              {auctionStatus === "paused" ? "Resume bidding" : "Pause bidding"}
+            </button>
           </div>
         </div>
+        {auctionStatus === "paused" && (
+          <div className="bg-[var(--warning)] text-white text-xs font-semibold text-center py-1.5">
+            Bidding is paused — owners cannot bid until you resume.
+          </div>
+        )}
       </div>
 
       <div className="max-w-4xl mx-auto px-6 py-8 grid grid-cols-3 gap-6">
@@ -230,11 +259,14 @@ export function AuctioneerConsole({ auction, ruleset, teams: initialTeams, initi
                 <p className="text-[var(--ink-soft)] mb-4">No lot currently open.</p>
                 <button
                   onClick={handleOpenNext}
-                  disabled={isPending || queuedCount === 0}
+                  disabled={isPending || queuedCount === 0 || auctionStatus === "paused"}
                   className="inline-flex items-center gap-2 px-5 py-2.5 rounded-md bg-[var(--brand)] text-white font-semibold text-sm hover:bg-[var(--brand-hover)] disabled:opacity-40 transition-colors"
                 >
                   <Play size={15} /> Open next lot
                 </button>
+                {auctionStatus === "paused" && (
+                  <p className="text-xs text-[var(--warning)] mt-2">Resume the auction to open the next lot.</p>
+                )}
                 {queuedCount === 0 && (
                   <p className="text-xs text-[var(--ink-faint)] mt-2">All lots have been processed.</p>
                 )}

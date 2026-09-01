@@ -10,6 +10,7 @@ import { BulkUploadPlayersForm } from "./bulk-upload-players-form";
 import { CricIQUploadForm } from "./criciq-upload-form";
 import { PlayerTable } from "./player-table";
 import { RulesEditor } from "./rules-editor";
+import { ResetAuctionButton } from "./reset-auction-button";
 import { TeamCard } from "./team-card";
 import { AppearanceSettings } from "./appearance-settings";
 import { PreDraftPanel } from "./pre-draft-panel";
@@ -271,6 +272,7 @@ export default async function AdminDashboard() {
             >
               View public live link →
             </a>
+            <ResetAuctionButton auctionId={auction.id} />
           </div>
         </div>
 

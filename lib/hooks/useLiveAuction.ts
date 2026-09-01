@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { autoResolveIfExpiredAction } from "@/lib/auction/shared-actions";
 
 export interface LiveLot {
   id: string;
@@ -73,14 +74,28 @@ export function useLiveAuction(auctionId: string) {
 
     // Poll every 3s as a safety net alongside realtime — bidding is the
     // highest-stakes live surface in the app, so we don't want it to ever
-    // depend on a single event type or channel arriving reliably.
-    const pollInterval = setInterval(refetchOpenLot, 3000);
+    // depend on a single event type or channel arriving reliably. Also
+    // doubles as a resolution self-heal: if this poll notices the open
+    // lot's timer has already expired, it nudges the server to resolve
+    // it, rather than relying solely on the Auctioneer's tab or the
+    // pg_cron backup job's timing.
+    const pollInterval = setInterval(async () => {
+      await refetchOpenLot();
+    }, 3000);
 
     return () => {
       supabase.removeChannel(lotsChannel);
       clearInterval(pollInterval);
     };
   }, [auctionId, refetchOpenLot, supabase]);
+
+  useEffect(() => {
+    if (!openLot || openLot.status !== "open" || !openLot.closes_at) return;
+    if (new Date(openLot.closes_at) > new Date()) return;
+    autoResolveIfExpiredAction(openLot.id).then((result) => {
+      if (result.resolved) refetchOpenLot();
+    });
+  }, [openLot, refetchOpenLot]);
 
   useEffect(() => {
     if (!openLot) {

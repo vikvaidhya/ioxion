@@ -36,6 +36,11 @@ export async function placeBidAction(lotId: string, teamId: string, amount: numb
     return { error: "Bidding has closed for this lot." };
   }
 
+  const { data: auctionStatus } = await supabase.from("auctions").select("status").eq("id", lot.auction_id).single();
+  if (auctionStatus?.status === "paused") {
+    return { error: "Bidding is paused — wait for the Auctioneer to resume." };
+  }
+
   const { data: auctionPlayer } = await supabase
     .from("auction_players")
     .select("category, base_price, player_id")
