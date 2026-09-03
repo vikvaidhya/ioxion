@@ -56,9 +56,10 @@ interface CricIQInfo {
   performanceScore: number | null;
 }
 
-export function OwnerBiddingRoom({ team: initialTeam, ruleset, squadCount: initialSquadCount, userId, orgName }: Props) {
+export function OwnerBiddingRoom({ team: initialTeam, ruleset: initialRuleset, squadCount: initialSquadCount, userId, orgName }: Props) {
   const [team, setTeam] = useState(initialTeam);
   const [squadCount, setSquadCount] = useState(initialSquadCount);
+  const [ruleset, setRuleset] = useState(initialRuleset);
   const { openLot, bids, highBid } = useLiveAuction(team.auction_id);
   const secondsLeft = useCountdown(openLot?.closes_at ?? null);
   const [justResolved, setJustResolved] = useState<"sold" | "unsold" | null>(null);
@@ -135,6 +136,36 @@ export function OwnerBiddingRoom({ team: initialTeam, ruleset, squadCount: initi
       clearInterval(pollInterval);
     };
   }, [team.id, team.auction_id, supabase]);
+
+  // Live-refetch the ruleset too — this was a real bug: the ruleset used to
+  // be a static prop, fetched only once when the page first loaded. If an
+  // Admin changed the rules (purse, squad size, categories) while an
+  // owner's tab was already open, that tab kept using the OLD numbers
+  // indefinitely — including in the "max possible bid" calculation, which
+  // could make a bid look impossible even after the Admin fixed the
+  // underlying config. Same realtime + poll pattern as team/squad above.
+  useEffect(() => {
+    const refetchRuleset = async () => {
+      const { data } = await supabase.from("auction_rulesets").select("*").eq("auction_id", team.auction_id).single();
+      if (data) setRuleset(data);
+    };
+
+    const channel = supabase
+      .channel(`owner:${team.auction_id}:ruleset`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "auction_rulesets", filter: `auction_id=eq.${team.auction_id}` },
+        refetchRuleset
+      )
+      .subscribe();
+
+    const pollInterval = setInterval(refetchRuleset, 4000);
+
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(pollInterval);
+    };
+  }, [team.auction_id, supabase]);
 
   useEffect(() => {
     if (!openLot) {
